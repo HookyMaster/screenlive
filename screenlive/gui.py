@@ -16,6 +16,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import sys
 import threading
 import tkinter as tk
 from datetime import datetime
@@ -42,10 +43,19 @@ _CURSOR_MAP = {
     "move": "fleur",
 }
 
-# 配置文件放在项目根目录(E 盘), 保存用户选择
-CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json"
-)
+# 配置文件: 开发时放项目根目录; PyInstaller 打包后放到用户目录
+# (打包目录只读/可能被移动, 不能写配置)。
+if getattr(sys, "frozen", False):
+    _cfg_dir = os.path.join(os.path.expanduser("~"), ".screenlive")
+    try:
+        os.makedirs(_cfg_dir, exist_ok=True)
+    except Exception:
+        _cfg_dir = os.path.expanduser("~")
+    CONFIG_PATH = os.path.join(_cfg_dir, "config.json")
+else:
+    CONFIG_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json"
+    )
 DEFAULT_OUTDIR = os.path.join(os.path.expanduser("~"), "Videos", "ScreenLive")
 
 #: 各比例预设的默认输出像素
@@ -73,6 +83,28 @@ def _save_config(cfg: dict) -> None:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+
+def _find_icon_path() -> str:
+    """定位窗口图标: 打包后从 _MEIPASS(经 --add-data 打入), 开发用项目根。
+    优先 .ico(iconbitmap 用, 窗口映射后设置才生效)。"""
+    names = ("icon.ico", "icon256.png")
+    if getattr(sys, "frozen", False):
+        for base in (getattr(sys, "_MEIPASS", ""),
+                     os.path.dirname(sys.executable)):
+            if not base:
+                continue
+            for n in names:
+                cand = os.path.join(base, n)
+                if os.path.exists(cand):
+                    return cand
+        return ""
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for n in names:
+        cand = os.path.join(root_dir, n)
+        if os.path.exists(cand):
+            return cand
+    return ""
 
 
 def set_capture_exclusion(win, enable: bool) -> bool:
@@ -121,9 +153,24 @@ class RecorderGUI:
         self._pv_label = "实时预览"
         self._screen = (0, 0)
 
+        # 像素输入防抖状态(见 _apply_pixel/_link_pixel)
+        self._pixel_master = "height"  # 最后编辑的维度
+        self._pixel_after_id: str | None = None
+        self._pixel_updating = False  # 联动 set 时置位, 防 trace 级联
+
+        # 音频设备枚举状态(后台线程写 pending, 主循环消费)
+        self._audio_loading = False
+        self._audio_devs_pending: list[str] | None = None
+
         cfg = _load_config()
 
         root.title("ScreenLive · 录制设置")
+
+        # 窗口图标(标题栏/任务栏): iconbitmap 必须等窗口映射后才生效,
+        # 故延迟到 after() 再设置(开发用项目根 icon.ico, 打包后从 _MEIPASS 取)
+        self._icon_path = _find_icon_path()
+        if self._icon_path:
+            root.after(80, self._apply_window_icon)
 
         self._build_ui(cfg)
 
@@ -188,30 +235,60 @@ class RecorderGUI:
         self._save_cfg()
 
     def _on_width_edit(self, *_a) -> None:
-        """手动改宽: 预设比例下自动联动高; 自定义不联动。"""
-        self._sync_linked(from_width=True)
+        """改宽: 记录主维度并防抖(停止输入 300ms 后联动/应用)。"""
+        if self._pixel_updating:
+            return
+        self._pixel_master = "width"
+        self._pixel_debounce()
 
     def _on_height_edit(self, *_a) -> None:
-        self._sync_linked(from_width=False)
+        if self._pixel_updating:
+            return
+        self._pixel_master = "height"
+        self._pixel_debounce()
 
-    def _sync_linked(self, from_width: bool) -> None:
+    def _pixel_debounce(self) -> None:
+        """防抖: 取消上一次的延迟应用, 停止输入 300ms 后再执行。"""
+        if self._pixel_after_id:
+            try:
+                self.root.after_cancel(self._pixel_after_id)
+            except Exception:
+                pass
+        self._pixel_after_id = self.root.after(300, self._apply_pixel)
+
+    def _apply_pixel(self) -> None:
+        """输入停顿后: 预设比例联动 -> 预览比例 -> 应用到捕获。"""
+        self._pixel_after_id = None
+        if self._pixel_updating:
+            return
+        self._pixel_updating = True
+        try:
+            self._link_pixel(self._pixel_master)
+        finally:
+            self._pixel_updating = False
+        self._sync_preview_ratio()
+        self._apply_output_size()
+        self._save_cfg()
+
+    def _link_pixel(self, master: str) -> None:
+        """预设比例下联动宽高; 自定义不联动。
+
+        注意: 联动只改写输入框显示(保留用户输入, 不强制偶数),
+        录制时由 _apply_output_size 内部做偶数化, 所见即所输。
+        """
         ratio = self.ratio_var.get()
         rw, rh = RATIO_PRESETS.get(ratio, (0, 0))
         if not (rw and rh):
-            # 自定义: 不联动, 但仍应用尺寸
-            self._apply_output_size()
-            return
+            return  # 自定义: 不联动
         try:
-            if from_width:
+            if master == "width":
                 w = int(self.width_var.get())
                 if 2 <= w <= 8192:
-                    self.height_var.set(_even(round(w * rh / rw)))
+                    self.height_var.set(str(round(w * rh / rw)))
             else:
                 h = int(self.height_var.get())
                 if 2 <= h <= 8192:
-                    self.width_var.set(_even(round(h * rw / rh)))
-            self._sync_preview_ratio()
-            self._apply_output_size()
+                    self.width_var.set(str(round(h * rw / rh)))
         except (ValueError, tk.TclError):
             pass
 
@@ -233,13 +310,19 @@ class RecorderGUI:
                 pass
 
     def _apply_output_size(self) -> None:
-        """把宽高输入应用到常驻捕获(录制中禁止)。"""
+        """把宽高输入应用到常驻捕获(录制中禁止; 内部偶数化, 不改输入框)。"""
         if not self.recorder:
+            return
+        try:
+            w = int(self.width_var.get())
+            h = int(self.height_var.get())
+        except (ValueError, tk.TclError):
+            return  # 输入非法/未完成: 不应用
+        if not (2 <= w <= 8192 and 2 <= h <= 8192):
             return
         if self.recorder.is_recording:
             self.status.set("⚠ 录制中不能改尺寸, 请先停止")
             return
-        w, h = self._current_px()
         self.recorder.set_size(_even(w), _even(h))
         self._update_preview_title()
 
@@ -304,6 +387,21 @@ class RecorderGUI:
         ttk.Checkbutton(frm, text="视频中显示鼠标光标",
                         variable=self.cursor_var).grid(
             row=row, column=0, columnspan=3, sticky="w", **pad)
+
+        # 录音(默认开启: 声音直接集成进视频, 单文件双流)
+        row += 1
+        self.audio_var = tk.BooleanVar(value=bool(cfg.get("audio", True)))
+        ttk.Checkbutton(frm, text="录制声音",
+                        variable=self.audio_var,
+                        command=self._on_audio_toggle).grid(
+            row=row, column=0, sticky="w", **pad)
+        self.audio_dev_var = tk.StringVar(value=str(cfg.get("audio_dev", "")))
+        self.audio_dev_cb = ttk.Combobox(
+            frm, textvariable=self.audio_dev_var, width=28,
+            state="disabled", values=[],
+        )
+        self.audio_dev_cb.grid(row=row, column=1, columnspan=2, sticky="w", **pad)
+        self._on_audio_toggle()  # 按 config 初始化下拉可用状态
 
         # 排除本窗口
         row += 1
@@ -592,6 +690,13 @@ class RecorderGUI:
         with self._frame_lock:
             frame = self._latest_frame
             self._latest_frame = None
+            devs = getattr(self, "_audio_devs_pending", None)
+            if devs is not None:
+                self._audio_devs_pending = None
+
+        # 音频设备枚举结果(后台线程写, 主循环消费)
+        if devs is not None:
+            self._audio_devices_ready(devs)
 
         if frame is not None and self.preview_win.winfo_exists() \
                 and self.preview_win.winfo_viewable():
@@ -643,6 +748,48 @@ class RecorderGUI:
         self.root.after(40, self._poll_preview)
 
     # ------------------------------------------------------------------ #
+    def _on_audio_toggle(self, *_a) -> None:
+        """勾选录音: 启用设备下拉(若设备列表为空则触发枚举)。"""
+        if self.audio_var.get():
+            self.audio_dev_cb.configure(state="readonly")
+            if not self.audio_dev_cb["values"] and self.ffmpeg:
+                self._load_audio_devices()
+        else:
+            self.audio_dev_cb.configure(state="disabled")
+
+    def _load_audio_devices(self) -> None:
+        """后台枚举音频输入设备(ffmpeg dshow)。
+
+        注意: 后台线程不能调用任何 Tk API(root.after 会报
+        "main thread is not in main loop"), 只写 pending 变量,
+        由 _poll_preview(Tk 主循环) 消费。
+        """
+        if getattr(self, "_audio_loading", False):
+            return
+        self._audio_loading = True
+
+        def work() -> None:
+            try:
+                from .encoder import list_audio_devices
+                devs = list_audio_devices(self.ffmpeg)
+            except Exception:
+                devs = []
+            with self._frame_lock:
+                self._audio_devs_pending = devs
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _audio_devices_ready(self, devs: list[str]) -> None:
+        self._audio_loading = False
+        self.audio_dev_cb["values"] = devs
+        cur = self.audio_dev_var.get()
+        if cur not in devs and devs:
+            self.audio_dev_var.set(devs[0])
+        if self.audio_var.get():
+            self.audio_dev_cb.configure(state="readonly")
+            if not devs:
+                self.status.set("⚠ 未找到音频输入设备(麦克风/立体声混音)")
+
     def _choose_dir(self) -> None:
         d = filedialog.askdirectory(
             title="选择视频保存目录",
@@ -664,6 +811,8 @@ class RecorderGUI:
             "fps": int(self.fps_var.get()),
             "smooth": float(self.smooth_var.get()),
             "cursor": bool(self.cursor_var.get()),
+            "audio": bool(self.audio_var.get()),
+            "audio_dev": self.audio_dev_var.get().strip(),
             "exclude_self": bool(self.exclude_var.get()),
         })
         _save_config(cfg)
@@ -720,7 +869,14 @@ class RecorderGUI:
                 or (self.recorder.target_w, self.recorder.target_h) != (_even(w), _even(h))):
             self._new_recorder()
 
-        self.recorder.start_recording(output, enc)
+        # 录音: 声音直接集成进视频(单文件含视频+音频流); 勾选但设备为空时
+        # 明确警告, 避免静默录出无声视频
+        audio_dev = None
+        if self.audio_var.get():
+            audio_dev = self.audio_dev_var.get().strip()
+            if not audio_dev:
+                self.status.set("⚠ 已勾选录制声音但未选择音频设备, 本次无音轨")
+        self.recorder.start_recording(output, enc, audio_device=audio_dev)
         self.btn.configure(text="■  停止录制  (F9)")
         w2, h2 = self.recorder.target_w, self.recorder.target_h
         self.status.set(f"录制中 {w2}×{h2} → {os.path.basename(output)}")
@@ -775,6 +931,15 @@ class RecorderGUI:
         self._save_cfg()
 
     # ------------------------------------------------------------------ #
+    def _apply_window_icon(self) -> None:
+        """窗口映射后设置标题栏/任务栏图标(iconbitmap 需映射后才生效)。"""
+        try:
+            if not getattr(self, "_icon_path", ""):
+                return
+            self.root.iconbitmap(self._icon_path)
+        except Exception:
+            pass
+
     def _on_status(self, st: dict) -> None:
         # 注意: 本回调在捕获线程中执行, 不能调用任何 Tk API
         # (否则会 "main thread is not in main loop")。只存数据,

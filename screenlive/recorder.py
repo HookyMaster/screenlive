@@ -92,6 +92,7 @@ class ScreenRecorder:
 
         self.output_path = ""
         self.enc: Optional[EncSpec] = None
+        self.audio_device: Optional[str] = None  # dshow 音频输入设备(录音)
 
         # 统计
         self.captured = 0
@@ -126,11 +127,13 @@ class ScreenRecorder:
     # ------------------------------------------------------------------ #
     # 录制启停
     # ------------------------------------------------------------------ #
-    def start_recording(self, output_path: str, enc: EncSpec) -> None:
+    def start_recording(self, output_path: str, enc: EncSpec,
+                        audio_device: str | None = None) -> None:
         if not self._running:
             self.start()
         self.output_path = output_path
         self.enc = enc
+        self.audio_device = audio_device
         self.encoded = 0
         self.dropped = 0
         self.duplicated = 0
@@ -322,7 +325,8 @@ class ScreenRecorder:
                 if proc is None:
                     h, w = last_frame.shape[:2]
                     cmd = build_command(
-                        self.ffmpeg, w, h, self.fps, self.enc, self.output_path
+                        self.ffmpeg, w, h, self.fps, self.enc, self.output_path,
+                        self.audio_device,
                     )
                     proc = subprocess.Popen(
                         cmd,

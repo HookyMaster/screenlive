@@ -1,13 +1,15 @@
 {
-  "ratio": "9:16 (竖屏手机)",
-  "width": 3698,
-  "height": 6574,
+  "ratio": "自定义",
+  "width": 810,
+  "height": 1440,
   "outdir": "e:\\ClaudeProject\\screenlive",
   "fps": 30,
   "smooth": 0.85,
   "cursor": true,
   "exclude_self": true,
-  "preview_x": 3036,
-  "preview_y": 1145,
-  "preview_w": 435
+  "preview_x": 1517,
+  "preview_y": 200,
+  "preview_w": 514,
+  "audio": true,
+  "audio_dev": "麦克风阵列 (Realtek High Definition Audio)"
 }

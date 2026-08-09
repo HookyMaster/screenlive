@@ -5,3 +5,6 @@ __pycache__/
 venv/
 recordings/
 *.mp4
+dist/
+build/
+*.spec

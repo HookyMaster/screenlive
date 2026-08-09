@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 
 __all__ = ["find_ffmpeg", "build_encoder_command", "detect_hardware_encoder",
@@ -27,6 +28,9 @@ _X264_CRF = {"fast": 28, "medium": 25, "high": 21}
 
 _HW_ENCODERS = ["h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox"]
 
+# Windows 下隐藏子进程控制台窗口(启动探测/录制时的 ffmpeg 都不弹窗)
+_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
 
 @dataclass
 class EncSpec:
@@ -37,7 +41,23 @@ class EncSpec:
 
 
 def find_ffmpeg() -> str:
-    """定位 ffmpeg: 优先系统安装, 否则使用 imageio-ffmpeg 内置二进制。"""
+    """定位 ffmpeg: PyInstaller 捆绑 > 系统安装 > imageio-ffmpeg 内置。"""
+    # 打包(frozen)环境: 优先用打包进 _MEIPASS 或 exe 同目录的 ffmpeg
+    # (PyInstaller 6 的 onedir 把数据放 _internal/, 文件名可能是
+    # ffmpeg.exe 或 imageio 命名的 ffmpeg-win-x86_64-*.exe)
+    if getattr(sys, "frozen", False):
+        import glob
+        for base in (getattr(sys, "_MEIPASS", ""),
+                     os.path.dirname(sys.executable)):
+            if not base or not os.path.isdir(base):
+                continue
+            for cand in (os.path.join(base, "ffmpeg.exe"),
+                         os.path.join(base, "ffmpeg")):
+                if os.path.isfile(cand):
+                    return cand
+            hits = sorted(glob.glob(os.path.join(base, "ffmpeg*.exe")))
+            if hits:
+                return hits[0]
     path = shutil.which("ffmpeg")
     if path:
         return path
@@ -59,6 +79,7 @@ def detect_hardware_encoder(ffmpeg: str) -> str | None:
             capture_output=True,
             text=True,
             timeout=15,
+            creationflags=_NO_WINDOW,
         ).stdout
     except Exception:
         return None
@@ -91,7 +112,8 @@ def verify_encoder(
     ]
     try:
         r = subprocess.run(cmd, input=frame * nframes,
-                           capture_output=True, timeout=timeout)
+                           capture_output=True, timeout=timeout,
+                           creationflags=_NO_WINDOW)
         return r.returncode == 0
     except Exception:
         return False
@@ -132,6 +154,31 @@ def build_encoder_command(quality: str, hw_encoder: str | None) -> EncSpec:
     )
 
 
+def list_audio_devices(ffmpeg: str) -> list[str]:
+    """枚举 Windows dshow 音频输入设备(麦克风/立体声混音等), 供录音选择。"""
+    if os.name != "nt":
+        return []
+    try:
+        r = subprocess.run(
+            [ffmpeg, "-hide_banner", "-list_devices", "true",
+             "-f", "dshow", "-i", "dummy"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=_NO_WINDOW,
+        )
+        out = (r.stdout or "") + (r.stderr or "")
+    except Exception:
+        return []
+    devs: list[str] = []
+    for line in out.splitlines():
+        if "(audio)" in line:
+            i = line.find('"')
+            if i >= 0:
+                j = line.find('"', i + 1)
+                if j > i:
+                    devs.append(line[i + 1:j])
+    return devs
+
+
 def build_command(
     ffmpeg: str,
     width: int,
@@ -139,9 +186,15 @@ def build_command(
     fps: int,
     enc: EncSpec,
     output: str,
+    audio_device: str | None = None,
 ) -> list[str]:
-    """构建完整 ffmpeg 命令: rawvideo(BGRA) 管道输入 -> h264 mp4。"""
-    return [
+    """构建完整 ffmpeg 命令: rawvideo(BGRA) 管道输入 -> h264 mp4。
+
+    audio_device 指定 Windows dshow 音频输入设备(麦克风/立体声混音)时,
+    同时录音频(aac 192k 48kHz 双声道), 视频 EOF 即结束(-shortest);
+    否则输出无音轨(-an)。
+    """
+    cmd = [
         ffmpeg,
         "-y",
         "-hide_banner",
@@ -151,9 +204,19 @@ def build_command(
         "-s", f"{width}x{height}",
         "-r", str(fps),
         "-i", "-",
+    ]
+    if audio_device:
+        cmd += [
+            "-f", "dshow", "-i", f"audio={audio_device}",
+            "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+            "-shortest",
+        ]
+    else:
+        cmd += ["-an"]
+    cmd += [
         *enc.args,
-        "-an",
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         output,
     ]
+    return cmd
