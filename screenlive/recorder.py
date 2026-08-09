@@ -33,6 +33,22 @@ __all__ = ["ScreenRecorder"]
 _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
+def _resize_bgra(frame: np.ndarray, w: int, h: int) -> np.ndarray:
+    """把 BGRA 帧缩放到 w x h(PIL 最近邻: 像素复制放大/像素抽样缩小)。
+
+    输入(捕获区域)与输出(视频)分辨率不同时, 每帧缩放回固定输出分辨率;
+    用户要求"像素复制补齐/像素抽样", 故用 NEAREST 而非双线性。
+    """
+    if frame.shape[1] == w and frame.shape[0] == h:
+        return frame
+    from PIL import Image
+    rgb = frame[:, :, [2, 1, 0, 3]]  # BGRA -> RGBA
+    img = Image.fromarray(np.ascontiguousarray(rgb), "RGBA")
+    img = img.resize((w, h), Image.NEAREST)
+    arr = np.asarray(img)
+    return np.ascontiguousarray(arr[:, :, [2, 1, 0, 3]])  # RGBA -> BGRA
+
+
 def _virtual_screen() -> tuple[int, int, int, int]:
     """虚拟屏幕(所有显示器合并)的 left, top, width, height。"""
     import ctypes
@@ -52,9 +68,14 @@ class ScreenRecorder:
     参数:
         ffmpeg:      ffmpeg 可执行路径
         fps:         捕获/录制帧率
-        target_w/h:  输出视频像素(宽/高), 任意值; 超出屏幕按比例适配
+        capture_w/h: 输入(捕获区域)像素, 窗口跟随鼠标的基准尺寸
+        target_w/h:  输出视频像素(宽/高), 任意值; 超出屏幕按比例适配。
+                     输入 != 输出时每帧最近邻缩放(输入小->像素复制放大,
+                     输入大->像素抽样缩小)
         smooth:      跟随系数(1.0 完全跟手, 鼠标尽量居中)
         show_cursor: 帧上是否叠加鼠标光标
+        zoom:        动态视野: 鼠标大幅滑动时放大捕获区域(收进更多画面),
+                     速度降下来平滑恢复; 输出分辨率不变
         on_frame:    每帧回调 fn(bgra_frame, region, mouse_rel) -> None, 供预览
         on_status:   录制状态回调 fn(dict) -> None
     """
@@ -63,21 +84,44 @@ class ScreenRecorder:
         self,
         ffmpeg: str,
         fps: int = 30,
+        capture_w: int = 810,
+        capture_h: int = 1440,
         target_w: int = 810,
         target_h: int = 1440,
         smooth: float = 0.85,
         show_cursor: bool = True,
+        zoom: bool = True,
+        zoom_thresh: float = 40.0,
+        show_click_fx: bool = True,
+        show_trail: bool = True,
         on_frame: Optional[Callable[[np.ndarray, dict, tuple], None]] = None,
         on_status: Optional[Callable[[dict], None]] = None,
     ) -> None:
         self.ffmpeg = ffmpeg
         self.fps = max(1, int(fps))
+        self.capture_w = int(capture_w)
+        self.capture_h = int(capture_h)
         self.target_w = int(target_w)
         self.target_h = int(target_h)
         self.smooth = smooth
         self.show_cursor = show_cursor
+        self.zoom = zoom
+        self.zoom_thresh = float(zoom_thresh)
+        self.show_click_fx = show_click_fx
+        self.show_trail = show_trail
         self.on_frame = on_frame
         self.on_status = on_status
+
+        # 光标 + 点击特效 + 拖尾(全局鼠标监听, 整个 recorder 生命周期持有)
+        from .cursor import CursorRenderer
+        self._cursor: Optional[CursorRenderer] = (
+            CursorRenderer(
+                show_cursor=self.show_cursor,
+                show_fx=self.show_click_fx,
+                show_trail=self.show_trail,
+            )
+            if (self.show_cursor or self.show_click_fx or self.show_trail) else None
+        )
 
         self._frames: queue.Queue = queue.Queue(maxsize=self.fps * 2)
         self._running = False          # 常驻捕获开关
@@ -123,6 +167,9 @@ class ScreenRecorder:
         self._running = False
         if self._capture_thread:
             self._capture_thread.join(timeout=3.0)
+        if self._cursor is not None:
+            self._cursor.stop()
+            self._cursor = None
 
     # ------------------------------------------------------------------ #
     # 录制启停
@@ -175,12 +222,14 @@ class ScreenRecorder:
         return self._recording
 
     def set_size(self, target_w: int, target_h: int) -> bool:
-        """请求变更输出尺寸。录制中不允许(帧尺寸必须一致), 返回是否接受。"""
+        """请求变更输出(视频)尺寸。录制中不允许(帧尺寸必须一致), 返回是否接受。
+
+        只更新输出 target(由捕获线程安全应用); 输入 capture 尺寸不变,
+        tracker 基准(捕获区域)无需重建。
+        """
         if self._recording:
             return False
-        self.target_w = int(target_w)
-        self.target_h = int(target_h)
-        self._pending_size = (self.target_w, self.target_h)
+        self._pending_size = (int(target_w), int(target_h))
         return True
 
     # ------------------------------------------------------------------ #
@@ -194,15 +243,18 @@ class ScreenRecorder:
         except Exception:
             pass
 
-        cursor = CursorRenderer() if self.show_cursor else None
+        cursor = self._cursor
         frame_dt = 1.0 / self.fps
         next_tick = time.monotonic()
         last_status = 0.0
 
         try:
             vx, vy, vw, vh = _virtual_screen()
+            # 捕获区域基准 = 输入像素(capture); 输出视频尺寸 = target(可不同)
             tracker = BoxTracker(
-                vw, vh, self.target_w, self.target_h, self.smooth
+                vw, vh, self.capture_w, self.capture_h, self.smooth,
+                zoom_max=3.0 if self.zoom else 1.0,
+                zoom_thresh=self.zoom_thresh,
             )
             self._tracker = tracker
 
@@ -210,11 +262,11 @@ class ScreenRecorder:
                 while self._running:
                     now = time.monotonic()
 
-                    # 应用主线程请求的尺寸变更(仅非录制时)
+                    # 应用主线程请求的输出尺寸变更(仅非录制时)
                     if self._pending_size is not None and not self._recording:
-                        pw, ph = self._pending_size
+                        tw, th = self._pending_size
                         self._pending_size = None
-                        tracker.set_size(pw, ph)
+                        self.target_w, self.target_h = tw, th
 
                     mx, my = get_cursor_pos()
                     rel_x = mx - vx
@@ -228,8 +280,23 @@ class ScreenRecorder:
 
                     mouse_rel = (rel_x - region["left"], rel_y - region["top"])
 
+                    # 动态视野: 捕获区域可能大于输出尺寸(鼠标大幅滑动放大),
+                    # 缩放到固定输出分辨率, 保证 ffmpeg 帧尺寸恒定
+                    rw, rh = region["width"], region["height"]
+                    if (rw, rh) != (self.target_w, self.target_h):
+                        frame = _resize_bgra(frame, self.target_w, self.target_h)
+                        mouse_rel = (
+                            mouse_rel[0] * (self.target_w / rw),
+                            mouse_rel[1] * (self.target_h / rh),
+                        )
+
                     if cursor is not None:
-                        cursor.draw(frame, mouse_rel[0], mouse_rel[1])
+                        cursor.draw(
+                            frame, mouse_rel[0], mouse_rel[1],
+                            region_abs=(vx + region["left"], vy + region["top"]),
+                            kx=self.target_w / rw,
+                            ky=self.target_h / rh,
+                        )
 
                     self.captured += 1
 

@@ -8,3 +8,4 @@ recordings/
 dist/
 build/
 *.spec
+ScreenLive-*.zip

@@ -162,14 +162,21 @@ def list_audio_devices(ffmpeg: str) -> list[str]:
         r = subprocess.run(
             [ffmpeg, "-hide_banner", "-list_devices", "true",
              "-f", "dshow", "-i", "dummy"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, timeout=15,
             creationflags=_NO_WINDOW,
         )
-        out = (r.stdout or "") + (r.stderr or "")
     except Exception:
         return []
+    out = (r.stdout or b"") + (r.stderr or b"")
+    # 关键: 不要用 text=True(按 locale 解码)。ffmpeg 的中文设备名是
+    # UTF-8 输出, GBK locale 下 text=True 会 UnicodeDecodeError 被吞 ->
+    # 枚举稳定失败。这里手动解码, UTF-8 优先, 失败回退 GBK。
+    try:
+        text = out.decode("utf-8")
+    except UnicodeDecodeError:
+        text = out.decode("gbk", errors="replace")
     devs: list[str] = []
-    for line in out.splitlines():
+    for line in text.splitlines():
         if "(audio)" in line:
             i = line.find('"')
             if i >= 0:

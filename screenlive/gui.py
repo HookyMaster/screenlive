@@ -154,13 +154,16 @@ class RecorderGUI:
         self._screen = (0, 0)
 
         # 像素输入防抖状态(见 _apply_pixel/_link_pixel)
-        self._pixel_master = "height"  # 最后编辑的维度
+        self._pixel_master = "height"  # 最后编辑的维度(固定比例联动依据)
         self._pixel_after_id: str | None = None
         self._pixel_updating = False  # 联动 set 时置位, 防 trace 级联
+        self._capture_after_id: str | None = None  # 输入像素防抖
+        self._capture_master = "height"  # 输入像素最后编辑维度(固定比例联动)
 
         # 音频设备枚举状态(后台线程写 pending, 主循环消费)
         self._audio_loading = False
-        self._audio_devs_pending: list[str] | None = None
+        self._audio_retry = 0
+        self._audio_devs_pending: tuple[list[str], str] | None = None
 
         cfg = _load_config()
 
@@ -222,6 +225,81 @@ class RecorderGUI:
             return 810, 1440
         return max(2, w), max(2, h)
 
+    def _current_in_px(self) -> tuple[int, int]:
+        """读取输入(捕获区域)像素, 非法时回退 810x1440。"""
+        try:
+            w = int(self.width_in_var.get())
+            h = int(self.height_in_var.get())
+        except (ValueError, tk.TclError):
+            return 810, 1440
+        return max(2, w), max(2, h)
+
+    def _on_width_in_edit(self, *_a) -> None:
+        if self._pixel_updating:
+            return
+        self._capture_master = "width"
+        self._capture_debounce()
+
+    def _on_height_in_edit(self, *_a) -> None:
+        if self._pixel_updating:
+            return
+        self._capture_master = "height"
+        self._capture_debounce()
+
+    def _capture_debounce(self) -> None:
+        """输入像素防抖: 停止输入 400ms 后联动/重建捕获。"""
+        if self._capture_after_id:
+            try:
+                self.root.after_cancel(self._capture_after_id)
+            except Exception:
+                pass
+        self._capture_after_id = self.root.after(400, self._apply_capture_size)
+
+    def _apply_capture_size(self) -> None:
+        """输入像素变化: 固定比例联动 -> 重建捕获(捕获区域基准 = 输入像素)。"""
+        self._capture_after_id = None
+        try:
+            w = int(self.width_in_var.get())
+            h = int(self.height_in_var.get())
+        except (ValueError, tk.TclError):
+            return
+        if not (2 <= w <= 8192 and 2 <= h <= 8192):
+            return
+        self._pixel_updating = True
+        try:
+            self._link_capture_pixel(self._capture_master)
+        finally:
+            self._pixel_updating = False
+        if self.recorder and self.recorder.is_recording:
+            self.status.set("⚠ 录制中不能改尺寸, 请先停止")
+            return
+        try:
+            w2 = int(self.width_in_var.get())
+            h2 = int(self.height_in_var.get())
+        except (ValueError, tk.TclError):
+            return
+        if (self.recorder.capture_w, self.recorder.capture_h) != (_even(w2), _even(h2)):
+            self._new_recorder()
+        self._save_cfg()
+
+    def _link_capture_pixel(self, master: str) -> None:
+        """输入像素: 固定比例下联动宽高; 自定义不联动。"""
+        ratio = self.ratio_var.get()
+        rw, rh = RATIO_PRESETS.get(ratio, (0, 0))
+        if not (rw and rh):
+            return  # 自定义: 不联动
+        try:
+            if master == "width":
+                w = int(self.width_in_var.get())
+                if 2 <= w <= 8192:
+                    self.height_in_var.set(str(round(w * rh / rw)))
+            else:
+                h = int(self.height_in_var.get())
+                if 2 <= h <= 8192:
+                    self.width_in_var.set(str(round(h * rw / rh)))
+        except (ValueError, tk.TclError):
+            pass
+
     def _on_ratio_change(self, *_a) -> None:
         """切换比例预设: 按默认像素联动宽高; 自定义则不动。"""
         self._apply_ratio_to_internal()
@@ -257,7 +335,11 @@ class RecorderGUI:
         self._pixel_after_id = self.root.after(300, self._apply_pixel)
 
     def _apply_pixel(self) -> None:
-        """输入停顿后: 预设比例联动 -> 预览比例 -> 应用到捕获。"""
+        """输入停顿后: 固定比例联动 -> 预览比例 -> 应用到捕获。
+
+        固定比例模式: 改宽自动推高(保持比例); 自定义模式: 完全自由输入。
+        联动只改写"对方"输入框(round 不强制偶数), 你正在输入的框保留。
+        """
         self._pixel_after_id = None
         if self._pixel_updating:
             return
@@ -271,10 +353,10 @@ class RecorderGUI:
         self._save_cfg()
 
     def _link_pixel(self, master: str) -> None:
-        """预设比例下联动宽高; 自定义不联动。
+        """固定比例下联动宽高; 自定义不联动。
 
-        注意: 联动只改写输入框显示(保留用户输入, 不强制偶数),
-        录制时由 _apply_output_size 内部做偶数化, 所见即所输。
+        只改写对方输入框(保留用户当前输入, 不强制偶数),
+        录制时由 _apply_output_size 内部做偶数化。
         """
         ratio = self.ratio_var.get()
         rw, rh = RATIO_PRESETS.get(ratio, (0, 0))
@@ -352,7 +434,21 @@ class RecorderGUI:
         )
         ratio_cb.grid(row=row, column=1, columnspan=2, sticky="w", **pad)
 
-        # 像素(任意)
+        # 输入像素(捕获区域, 可独立于输出; 最近邻缩放)
+        row += 1
+        ttk.Label(frm, text="输入像素:").grid(row=row, column=0, sticky="w", **pad)
+        self.width_in_var = tk.StringVar(
+            value=str(cfg.get("capture_w", cfg.get("width", 810))))
+        self.height_in_var = tk.StringVar(
+            value=str(cfg.get("capture_h", cfg.get("height", 1440))))
+        inf = ttk.Frame(frm)
+        inf.grid(row=row, column=1, columnspan=2, sticky="w")
+        ttk.Entry(inf, textvariable=self.width_in_var, width=7).pack(side="left")
+        ttk.Label(inf, text=" × ").pack(side="left")
+        ttk.Entry(inf, textvariable=self.height_in_var, width=7).pack(side="left")
+        ttk.Label(inf, text=" px").pack(side="left")
+
+        # 输出像素(视频分辨率)
         row += 1
         ttk.Label(frm, text="输出像素:").grid(row=row, column=0, sticky="w", **pad)
         self.width_var = tk.StringVar(value=str(cfg.get("width", 810)))
@@ -363,6 +459,11 @@ class RecorderGUI:
         ttk.Label(wf, text=" × ").pack(side="left")
         ttk.Entry(wf, textvariable=self.height_var, width=7).pack(side="left")
         ttk.Label(wf, text=" px").pack(side="left")
+        ttk.Label(
+            frm, text="输入≠输出时自动缩放(输出大→像素复制放大, 输出小→像素抽样)",
+            foreground="#888888",
+        ).grid(row=row + 1, column=1, columnspan=2, sticky="w", padx=8)
+        row += 1  # 说明文字占一行
 
         # 帧率
         row += 1
@@ -387,6 +488,50 @@ class RecorderGUI:
         ttk.Checkbutton(frm, text="视频中显示鼠标光标",
                         variable=self.cursor_var).grid(
             row=row, column=0, columnspan=3, sticky="w", **pad)
+
+        # 点击特效
+        row += 1
+        self.click_fx_var = tk.BooleanVar(value=bool(cfg.get("click_fx", True)))
+        ttk.Checkbutton(frm, text="鼠标点击特效(左/右/中键/滚轮)",
+                        variable=self.click_fx_var).grid(
+            row=row, column=0, columnspan=3, sticky="w", **pad)
+
+        # 鼠标拖尾
+        row += 1
+        self.trail_var = tk.BooleanVar(value=bool(cfg.get("trail", True)))
+        ttk.Checkbutton(frm, text="鼠标拖尾轨迹",
+                        variable=self.trail_var).grid(
+            row=row, column=0, columnspan=3, sticky="w", **pad)
+
+        # 预览置顶
+        row += 1
+        self.preview_top_var = tk.BooleanVar(
+            value=bool(cfg.get("preview_top", True)))
+        ttk.Checkbutton(frm, text="预览窗口置顶(不被遮挡)",
+                        variable=self.preview_top_var,
+                        command=self._on_preview_top_toggle).grid(
+            row=row, column=0, columnspan=3, sticky="w", **pad)
+
+        # 动态视野
+        row += 1
+        self.zoom_var = tk.BooleanVar(value=bool(cfg.get("zoom", True)))
+        zf = ttk.Frame(frm)
+        zf.grid(row=row, column=0, columnspan=3, sticky="w")
+        ttk.Checkbutton(zf, text="大幅滑动自动放大视野",
+                        variable=self.zoom_var).pack(side="left")
+        # 灵敏度: 低=60 / 中=40 / 高=25 (px/帧, 超过才缩放)
+        self.zoom_thresh_var = tk.IntVar(
+            value=int(cfg.get("zoom_thresh", 40)))
+        self.zoom_level_var = tk.StringVar(value="中")
+        _th_cur = int(cfg.get("zoom_thresh", 40))
+        for lv, th in (("低", 60), ("中", 40), ("高", 25)):
+            if _th_cur == th:
+                self.zoom_level_var.set(lv)
+        ttk.Label(zf, text="灵敏度:").pack(side="left", padx=(12, 4))
+        ttk.Combobox(
+            zf, textvariable=self.zoom_level_var, width=4,
+            state="readonly", values=["低", "中", "高"],
+        ).bind("<<ComboboxSelected>>", self._on_zoom_level)
 
         # 录音(默认开启: 声音直接集成进视频, 单文件双流)
         row += 1
@@ -449,6 +594,8 @@ class RecorderGUI:
         ratio_cb.bind("<<ComboboxSelected>>", self._on_ratio_change)
         self.width_var.trace_add("write", self._on_width_edit)
         self.height_var.trace_add("write", self._on_height_edit)
+        self.width_in_var.trace_add("write", self._on_width_in_edit)
+        self.height_in_var.trace_add("write", self._on_height_in_edit)
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -463,6 +610,8 @@ class RecorderGUI:
         # 无边框窗口: 没有标题栏/边框 => 没有系统最小跟踪尺寸,
         # 尺寸完全由自己控制, 默认可以做到屏幕的 1/8 高。
         pw.overrideredirect(True)
+        # 置顶: 预览窗口始终在其它窗口之上, 不被遮挡
+        pw.attributes("-topmost", bool(cfg.get("preview_top", True)))
 
         self.canvas = tk.Canvas(pw, bg="black", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
@@ -667,13 +816,20 @@ class RecorderGUI:
         if self.recorder:
             self.recorder.shutdown()
         w, h = self._current_px()
+        iw, ih = self._current_in_px()
         self.recorder = ScreenRecorder(
             ffmpeg=self.ffmpeg,
             fps=int(self.fps_var.get()),
+            capture_w=_even(iw),
+            capture_h=_even(ih),
             target_w=_even(w),
             target_h=_even(h),
             smooth=float(self.smooth_var.get()),
             show_cursor=bool(self.cursor_var.get()),
+            zoom=bool(self.zoom_var.get()),
+            zoom_thresh=float(self.zoom_thresh_var.get()),
+            show_click_fx=bool(self.click_fx_var.get()),
+            show_trail=bool(self.trail_var.get()),
             on_frame=self._on_capture_frame,
             on_status=self._on_status,
         )
@@ -690,13 +846,13 @@ class RecorderGUI:
         with self._frame_lock:
             frame = self._latest_frame
             self._latest_frame = None
-            devs = getattr(self, "_audio_devs_pending", None)
-            if devs is not None:
+            pending = getattr(self, "_audio_devs_pending", None)
+            if pending is not None:
                 self._audio_devs_pending = None
 
         # 音频设备枚举结果(后台线程写, 主循环消费)
-        if devs is not None:
-            self._audio_devices_ready(devs)
+        if pending is not None:
+            self._audio_devices_ready(pending[0], pending[1])
 
         if frame is not None and self.preview_win.winfo_exists() \
                 and self.preview_win.winfo_viewable():
@@ -726,6 +882,18 @@ class RecorderGUI:
                         x0 - 3, y0 - 2, x1 + 3, y1 + 2,
                         fill="#333333", stipple="gray50", outline="",
                         tags="ovl")
+                    # 红色细线边界: 无边框窗口没有视觉边界, 用红线标示
+                    self.canvas.delete("border")
+                    self.canvas.create_line(
+                        0, 0, cw, 0, fill="#E24B4A", width=1, tags="border")
+                    self.canvas.create_line(
+                        0, ch - 1, cw, ch - 1, fill="#E24B4A", width=1,
+                        tags="border")
+                    self.canvas.create_line(
+                        0, 0, 0, ch, fill="#E24B4A", width=1, tags="border")
+                    self.canvas.create_line(
+                        cw - 1, 0, cw - 1, ch, fill="#E24B4A", width=1,
+                        tags="border")
             except Exception:
                 pass
 
@@ -748,9 +916,25 @@ class RecorderGUI:
         self.root.after(40, self._poll_preview)
 
     # ------------------------------------------------------------------ #
+    def _on_preview_top_toggle(self, *_a) -> None:
+        """切换预览窗口置顶状态(实时生效)。"""
+        try:
+            if getattr(self, "preview_win", None) and self.preview_win.winfo_exists():
+                self.preview_win.attributes(
+                    "-topmost", bool(self.preview_top_var.get()))
+        except Exception:
+            pass
+
+    def _on_zoom_level(self, _e=None) -> None:
+        """灵敏度切换: 低=60 / 中=40 / 高=25 px/帧, 超过该速度才缩放。"""
+        lv = self.zoom_level_var.get()
+        self.zoom_thresh_var.set({"低": 60, "中": 40, "高": 25}.get(lv, 40))
+        self._save_cfg()
+
     def _on_audio_toggle(self, *_a) -> None:
         """勾选录音: 启用设备下拉(若设备列表为空则触发枚举)。"""
         if self.audio_var.get():
+            self._audio_retry = 0
             self.audio_dev_cb.configure(state="readonly")
             if not self.audio_dev_cb["values"] and self.ffmpeg:
                 self._load_audio_devices()
@@ -758,7 +942,7 @@ class RecorderGUI:
             self.audio_dev_cb.configure(state="disabled")
 
     def _load_audio_devices(self) -> None:
-        """后台枚举音频输入设备(ffmpeg dshow)。
+        """后台枚举音频输入设备(ffmpeg dshow), 失败自动重试(最多 3 次)。
 
         注意: 后台线程不能调用任何 Tk API(root.after 会报
         "main thread is not in main loop"), 只写 pending 变量,
@@ -767,28 +951,53 @@ class RecorderGUI:
         if getattr(self, "_audio_loading", False):
             return
         self._audio_loading = True
+        self._audio_retry = getattr(self, "_audio_retry", 0) + 1
+        if self._audio_retry == 1 and getattr(self, "status", None):
+            self.status.set("正在检测音频设备…")
 
         def work() -> None:
+            devs: list[str] = []
+            err = ""
             try:
                 from .encoder import list_audio_devices
                 devs = list_audio_devices(self.ffmpeg)
-            except Exception:
-                devs = []
+            except Exception as e:  # noqa: BLE001
+                err = repr(e)
             with self._frame_lock:
-                self._audio_devs_pending = devs
+                self._audio_devs_pending = (devs, err)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _audio_devices_ready(self, devs: list[str]) -> None:
+    def _audio_devices_ready(self, devs: list[str], err: str = "") -> None:
         self._audio_loading = False
         self.audio_dev_cb["values"] = devs
         cur = self.audio_dev_var.get()
         if cur not in devs and devs:
             self.audio_dev_var.set(devs[0])
-        if self.audio_var.get():
-            self.audio_dev_cb.configure(state="readonly")
-            if not devs:
-                self.status.set("⚠ 未找到音频输入设备(麦克风/立体声混音)")
+        if not self.audio_var.get():
+            return
+        self.audio_dev_cb.configure(state="readonly")
+        if devs:
+            # 清除可能残留的失败/重试提示(设备已找到)
+            cur_text = self.status.get()
+            if cur_text.startswith(("⚠", "正在重试", "正在检测")):
+                self.status.set(
+                    f"音频设备: {devs[0]} · F9 开始/停止录制")
+            return
+        # 枚举失败: 记录日志 + 自动重试, 3 次仍失败才提示检查系统设备
+        try:
+            log = os.path.join(os.path.dirname(CONFIG_PATH), "debug.log")
+            with open(log, "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now().strftime('%H:%M:%S')} "
+                        f"audio 枚举第{self._audio_retry}次失败: "
+                        f"devs={devs!r} err={err}\n")
+        except Exception:
+            pass
+        if self._audio_retry < 3:
+            self.status.set("正在重试检测音频设备…")
+            self.root.after(1500, self._load_audio_devices)
+        else:
+            self.status.set("⚠ 未找到音频输入设备, 请检查系统录音设备")
 
     def _choose_dir(self) -> None:
         d = filedialog.askdirectory(
@@ -807,10 +1016,17 @@ class RecorderGUI:
             "ratio": self.ratio_var.get(),
             "width": w,
             "height": h,
+            "capture_w": self._current_in_px()[0],
+            "capture_h": self._current_in_px()[1],
             "outdir": self.outdir_var.get().strip(),
             "fps": int(self.fps_var.get()),
             "smooth": float(self.smooth_var.get()),
             "cursor": bool(self.cursor_var.get()),
+            "click_fx": bool(self.click_fx_var.get()),
+            "trail": bool(self.trail_var.get()),
+            "preview_top": bool(self.preview_top_var.get()),
+            "zoom": bool(self.zoom_var.get()),
+            "zoom_thresh": int(self.zoom_thresh_var.get()),
             "audio": bool(self.audio_var.get()),
             "audio_dev": self.audio_dev_var.get().strip(),
             "exclude_self": bool(self.exclude_var.get()),
@@ -865,7 +1081,11 @@ class RecorderGUI:
         if self.recorder and (
                 self.recorder.fps != int(self.fps_var.get())
                 or self.recorder.show_cursor != bool(self.cursor_var.get())
+                or self.recorder.show_click_fx != bool(self.click_fx_var.get())
+                or self.recorder.show_trail != bool(self.trail_var.get())
                 or self.recorder.smooth != float(self.smooth_var.get())
+                or self.recorder.zoom != bool(self.zoom_var.get())
+                or self.recorder.zoom_thresh != float(self.zoom_thresh_var.get())
                 or (self.recorder.target_w, self.recorder.target_h) != (_even(w), _even(h))):
             self._new_recorder()
 

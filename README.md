@@ -1,56 +1,67 @@
-# ScreenLive · 鼠标追踪 9:16 录屏
+# ScreenLive — Focus-Follow Screen Recorder
 
-自动跟随鼠标、实时输出 9:16 竖屏视频的录屏工具。适合做手机竖屏的演示/教程/直播切片。
+A screen recorder that keeps the capture window centered on your mouse. Supports portrait/landscape aspect ratios, dynamic field-of-view zoom, mouse action visualization (click effects / trail), and system/microphone audio recording.
 
-## 快速开始
+## ✨ Features
 
-双击 `run.bat` 即可启动图形界面（无控制台窗口）。
+- **Focus-follow recording**: capture window always centers on the cursor with smooth tracking (adjustable follow speed)
+- **Dynamic FOV zoom**: fast, large mouse swipes automatically widen the capture area (see more of the screen), smoothly returning to normal when you slow down; sensitivity adjustable (Low / Medium / High)
+- **Separate input/output resolution**: capture pixels and video pixels are independent — small input → large output uses **nearest-neighbor upscaling (pixel copy)**, large input → small output **downsamples by pixel sampling**
+- **Mouse action visualization**: click effects (left = red, right = blue, middle = yellow ring; scroll = green direction indicator) + mouse trail
+- **Audio recording**: microphone / system audio (requires "Stereo Mix") mixed directly into the video — single-file mp4 with AAC track
+- **Any aspect ratio**: 9:16, 16:9, 1:1, 3:4, 4:3, 9:21 or fully custom pixels; width/height auto-linked for fixed ratios
+- **Live preview**: borderless preview window — drag to move, edge-drag to resize proportionally, always-on-top, with a red border marking the capture area
+- **Self-exclusion**: the app's own windows are excluded from recording
+- **Hardware acceleration**: NVIDIA NVENC / Intel QSV / AMD AMF used automatically when available
 
-依赖已安装在项目内 `E:\ClaudeProject\screenlive\.venv`，无需额外安装。
+## 🖥 System Requirements
 
-## 功能
+- Windows 10 / 11 (x64)
+- No Python or any runtime dependency required
 
-| 功能 | 说明 |
-|---|---|
-| **自动追踪鼠标** | 裁剪窗口始终跟随鼠标，默认鼠标在画面中间（可调跟随速度） |
-| **常用比例 + 任意像素** | 预设 9:16 / 16:9 / 1:1 / 3:4 / 4:3 / 9:21，选预设后宽高联动；也可输入任意像素 |
-| **双窗口界面** | 设置窗口（比例/像素/帧率/目录等）+ 独立实时预览窗口（不录制也能看框选画面） |
-| **预览等比拖拽** | 无边框预览窗口：拖动边缘/角按输出比例实时等比缩放（自实现，全程严格等比、零抖动），拖动窗口身体自由移动；默认高度为屏幕的 1/8，启动即小巧；预览缩放不影响输出像素 |
-| **不录制本窗口** | 默认开启：用 Win32 `WDA_EXCLUDEFROMCAPTURE` 让抓屏跳过软件窗口，只录窗口之下的内容（需 Win10 2004+） |
-| **边缘处理** | 窗口碰到屏幕边缘时尺寸不变，鼠标自然偏离中心 |
-| **时长准确** | 编码节奏锚定首帧实际到达时刻，输出时长与真实录制时长一致 |
-| **保存目录可选** | 「选择…」按钮打开文件夹对话框挑选，选择会记住（config.json） |
-| **无控制台** | pythonw 启动，ffmpeg 子进程也隐藏窗口 |
-| **全局热键** | F9 = 开始/停止录制 |
+## ⬇️ Download & Install
 
-## 性能设计
+Get the latest build from the [Releases page](https://github.com/HookyMaster/screenlive/releases/latest):
 
-- **BitBlt 直接抓屏**：绕过 mss 封装，810×1440 实测 33+ fps，CPU 占用低
-- **只截小窗口**：不抓全屏，按 9:16 region 直接输出，零缩放
-- **常驻捕获 + 录制解耦**：预览一直跑，只有点「开始录制」才启动 ffmpeg 编码
-- **有界队列 + 丢帧**：编码跟不上时主动丢旧帧，内存不膨胀
-- **硬编码优先**：自动探测 NVENC/QSV/AMF，实测验证可用才用；无 GPU 时回退 libx264
+- `ScreenLive-vX.X.X-win64.zip` — fully self-contained package (runtime + bundled ffmpeg)
 
-## 命令行用法
+**Install**: unzip → double-click `ScreenLive.exe`. No installation needed.
+
+## 🎬 Usage
+
+1. Launch — the settings window appears and the preview opens (red border = capture area)
+2. Choose aspect ratio / pixels, follow speed, audio, etc. in the settings window
+3. Press **F9** or click "Start Recording" to begin; press **F9** again to stop
+4. Videos are saved to `Videos\ScreenLive` by default
+
+**Hotkey**: `F9` start/stop recording
+
+**Troubleshooting**:
+- To record internal audio (game/video sound): enable "Stereo Mix" in Sound settings → Recording, then restart the app to select it
+- Resolution/ratio cannot be changed while recording (ffmpeg requires constant frame size) — stop first, then change
+
+## 🔨 Build from Source
 
 ```bash
-.venv\Scripts\python main.py --duration 30            # 录 30 秒
-.venv\Scripts\python main.py --size 大 --fps 30       # 1080x1920
-.venv\Scripts\python main.py -o out.mp4 --no-cursor   # 指定输出/不画光标
+# Env: Python 3.13, dependencies in project-local .venv
+.venv\Scripts\pip install -r requirements.txt
+
+# Package (full command with icon & bundled ffmpeg):
+.venv\Scripts\pyinstaller --noconfirm --windowed --name ScreenLive ^
+  --icon icon.ico --add-data "icon.ico;." --add-data "icon256.png;." ^
+  --collect-all imageio_ffmpeg --collect-all pynput ^
+  --add-binary ".venv\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe;." ^
+  app.py
 ```
 
-## 目录
+Output is in `dist\ScreenLive\` — the whole directory (`ScreenLive.exe` + `_internal\`) is the self-contained package.
 
-```
-main.py                 入口(CLI + GUI + F9 热键)
-run.bat                 双击启动 GUI
-requirements.txt        依赖清单
-config.json             用户设置(自动生成)
-screenlive/
-├── tracker.py          9:16 窗口计算 + 鼠标居中跟随
-├── capture.py          Win32 BitBlt 屏幕捕获(高帧率)
-├── cursor.py           numpy 预乘 alpha 光标渲染
-├── encoder.py          FFmpeg 编码器探测+封装
-├── recorder.py         常驻捕获 + 录制流水线
-└── gui.py              Tkinter 控制面板(实时预览)
-```
+## 📖 About
+
+- **Tech stack**: Python 3.13 · Tkinter · numpy · mss (screen capture) · ffmpeg (encode/audio) · pynput (global mouse hook)
+- **Purpose**: built for demo/tutorial recording — mouse trail, click positions and focus are all clearly visible
+- **License**: MIT
+
+---
+
+[中文说明](README.zh-CN.md)
