@@ -1,0 +1,13 @@
+{
+  "ratio": "9:16 (竖屏手机)",
+  "width": 3698,
+  "height": 6574,
+  "outdir": "e:\\ClaudeProject\\screenlive",
+  "fps": 30,
+  "smooth": 0.85,
+  "cursor": true,
+  "exclude_self": true,
+  "preview_x": 3036,
+  "preview_y": 1145,
+  "preview_w": 435
+}
