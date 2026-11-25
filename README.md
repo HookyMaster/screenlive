@@ -12,6 +12,12 @@ ScreenLive is a Windows screen recorder with portrait and landscape output, mous
 2. Download the Essentials ZIP from [FFmpeg Windows builds](https://www.gyan.dev/ffmpeg/builds/). Copy its `bin/ffmpeg.exe` into the extracted ScreenLive folder, alongside `ScreenLive.exe`. FFmpeg is a separate download.
 3. Double-click `ScreenLive.exe`. Keep the recorder component and WebView2 loader in the same folder.
 
+## Interface language
+
+Open **更多 (More) → 语言 (Language) → English** to switch the interface immediately. To switch back, select **More → Language → Simplified Chinese**. ScreenLive remembers your choice after restart.
+
+The v0.2.1 Windows download includes the language switch and layout fixes for English labels. The walkthrough screenshots show the Chinese interface.
+
 ## Screenshot walkthrough
 
 ### 1. Right-click to exit

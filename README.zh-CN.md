@@ -12,6 +12,12 @@ ScreenLive 是一款 Windows 屏幕录制工具，支持竖屏和常用横屏画
 2. 打开 [FFmpeg Windows x64 builds](https://www.gyan.dev/ffmpeg/builds/)，下载 Release builds 下的 Essentials ZIP。把其中 `bin/ffmpeg.exe` 放到 ScreenLive 解压目录，与 `ScreenLive.exe` 同级。FFmpeg 单独提供。
 3. 双击 `ScreenLive.exe`。主程序、采集组件和 WebView2 加载器应保留在同一目录。
 
+## 界面语言
+
+打开 **更多 → 语言 → English** 即可立即切换到英文。要切回中文，选择 **More → Language → Simplified Chinese**。语言选择会自动保存。
+
+v0.2.1 下载包包含语言切换和英文排版修正。下方截图使用中文界面。
+
 ## 截图教程
 
 ### 1. 右键退出

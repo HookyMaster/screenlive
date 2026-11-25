@@ -1,6 +1,6 @@
 {
   "productName": "ScreenLive",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "app.screenlive.desktop",
   "build": { "frontendDist": "../desktop" },
   "app": {
