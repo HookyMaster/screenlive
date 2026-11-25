@@ -328,3 +328,17 @@ html:is([data-appearance=lilac],[data-appearance=cream],[data-appearance=rose],[
 #region-controls button{font-size:11px;padding:4px 6px;background:var(--soft-base);color:var(--soft-ink);border-color:transparent;box-shadow:-2px -2px 4px var(--soft-light),2px 2px 4px var(--soft-shade)}
 #region-size{white-space:nowrap;font-size:10px}
 .dial-choice-group:has(select#source) span{text-align:left;padding:7px 8px;overflow-wrap:anywhere}
+
+#language-option{margin-bottom:8px;color:var(--soft-ink)}
+#language-option select{width:100%;color:var(--soft-ink)}
+html[lang=en] #dial button[data-setting] span{font-size:10px}
+html[lang=en] :is(#dial-detail,#native-feedback,#gem-menu){overflow-wrap:anywhere}
+html[lang=en] :is(#dial-detail,#native-feedback,#gem-menu) button{max-width:100%;white-space:normal}
+html[lang=en] #audio-controls{grid-template-columns:minmax(0,1fr)}
+html[lang=en] #audio-controls label{min-width:0;white-space:normal}
+html[lang=en] #audio-controls input{flex:none}
+html[lang=en] #dial-detail select{width:100%;max-width:100%;text-overflow:ellipsis}
+html[lang=en] #preview-range{grid-template-columns:minmax(0,1fr) auto}
+html[lang=en] #save-location>div{display:flex;flex-wrap:wrap;gap:5px}
+html[lang=en] #extra-controls>small{display:block}
+html[lang=en] #native-hint #status{overflow-x:hidden}

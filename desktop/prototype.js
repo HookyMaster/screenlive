@@ -1,6 +1,57 @@
 (async () => {
 const $ = id => document.getElementById(id);
 const adapter = native || backend;
+let language = 'zh-CN';
+const translatedNodes = [];
+function t(text) {
+  return language === 'en' && Object.hasOwn(screenLiveEnglish, text)
+    ? screenLiveEnglish[text] : text;
+}
+function sourceLabel(name) {
+  if (language !== 'en') return name;
+  return t(name).replace(/ · 窗口 (\d+)$/, ' · Window $1')
+    .replace(/^框选区域 (?=\d)/, 'Region ')
+    .replace(/^音频设备 (?=\d)/, 'Audio device ');
+}
+function message(error) {
+  const original = String(error);
+  if (language !== 'en') return original;
+  if (Object.hasOwn(screenLiveEnglish, original)) return t(original);
+  const parts = [
+    '麦克风访问被拒绝。请检查 Windows「设置 → 隐私和安全性 → 麦克风」中的桌面应用访问权限。',
+    '麦克风访问被拒绝，请检查 Windows 麦克风权限。','找不到随应用提供的 ',
+    '找不到所选 Windows 壁纸','无法读取所选 Windows 壁纸','不支持该背景',
+    '录制退出：','电平不可用：','电脑声音','麦克风','启动失败：','视频收尾',
+    '音频编码','MP4 封装','超时，已保留中间文件：','失败，已保留中间文件：',
+  ];
+  return parts.reduce((value, part) => value.replaceAll(part, t(part)), original);
+}
+function registerTranslations() {
+  const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const original = node.data.trim();
+    if (sourceLabelKey(original)) {
+      translatedNodes.push(() => {
+        node.data = node.data.replace(/^(\s*).*?(\s*)$/s, (_, before, after) =>
+          before + sourceLabel(original) + after);
+      });
+    }
+  }
+  for (const element of document.querySelectorAll('[title],[aria-label]')) {
+    for (const attribute of ['title', 'aria-label']) {
+      const original = element.getAttribute(attribute);
+      if (original && Object.hasOwn(screenLiveEnglish, original)) {
+        translatedNodes.push(() => element.setAttribute(attribute, t(original)));
+      }
+    }
+  }
+}
+function sourceLabelKey(value) {
+  return Object.hasOwn(screenLiveEnglish, value) || / · 窗口 \d+$/.test(value)
+    || /^(框选区域|音频设备) \d/.test(value);
+}
+
 let outputFolder = '';
 let selectedRegion = '';
 let pickingRegion = false;
@@ -11,7 +62,7 @@ let meterRequestPending = false;
 let metersActive = false;
 function setOutputFolder(folder) {
   outputFolder = folder;
-  $('save-folder').textContent = folder || '视频 / ScreenLive';
+  $('save-folder').textContent = folder || t('视频 / ScreenLive');
   $('save-folder').title = folder;
   $('reset-folder').hidden = !folder;
   try { localStorage.setItem('screenlive-output-folder', folder); } catch {}
@@ -20,19 +71,19 @@ function setOutputFolder(folder) {
 function persistConfig() {
   if (!native || !configReady) return configurationWrites;
   const settings = {
-    version: 1, outputFolder, ...cameraSettings(),
+    version: 1, outputFolder, language, ...cameraSettings(),
     ratio: $('ratio').value, mode: $('mode').value, background: $('background').value,
     preview: $('preview-start').value, appearance: $('appearance').value,
     inputDevice: $('input-device').value, outputDevice: $('output-device').value,
     microphone: $('microphone').checked, systemAudio: $('system-audio').checked,
-    sourceNames: [...$('source').selectedOptions].map(option => option.textContent),
+    sourceNames: [...$('source').selectedOptions].map(option => option.dataset.sourceName || option.textContent),
   };
   if (!settings.sourceNames.length && !sourceSelectionTouched) {
     settings.sourceNames = savedConfig.sourceNames || [];
   }
   if (selectedRegion) settings.sourceNames.push('框选区域 ' + $('region-size').textContent);
   configurationWrites = configurationWrites.catch(() => {}).then(() => native.saveConfig(settings))
-    .catch(error => { $('status').textContent = '设置保存失败：' + String(error); });
+    .catch(error => { $('status').textContent = t('设置保存失败：') + message(error); });
   return configurationWrites;
 }
 let sourceSelectionTouched = false;
@@ -57,7 +108,7 @@ if (native) {
   const done = document.createElement('button');
   done.id = 'result-back';
   done.type = 'button';
-  done.textContent = '返回';
+  done.textContent = t('返回');
   done.onclick = () => {
     feedback.hidden = true;
     $('settings').hidden = false;
@@ -81,7 +132,7 @@ if (native) {
     try {
       const folder = await native.pickFolder();
       if (folder) setOutputFolder(folder);
-    } catch (error) { $('status').textContent = String(error); }
+    } catch (error) { $('status').textContent = message(error); }
   };
   $('reset-folder').onclick = () => setOutputFolder('');
   const [sources, wallpapers, config] = await Promise.all([
@@ -91,6 +142,7 @@ if (native) {
   savedConfig = config || {};
   $('source').multiple = true;
   $('source').replaceChildren(...sources.map(source => new Option(source.title, source.id)));
+  for (const option of $('source').options) option.dataset.sourceName = option.textContent;
   for (const { id, title, thumbnail } of wallpapers) {
     const option = new Option(title, id);
     option.dataset.thumbnail = thumbnail;
@@ -109,7 +161,7 @@ let active = new URLSearchParams(location.search).get('variant');
 if (!variants.includes(active)) active = 'A';
 function showVariant() {
   document.body.dataset.variant = active;
-  $('variant').textContent = layoutNames[active];
+  $('variant').textContent = t(layoutNames[active]);
 }
 function cycle(step) {
   active = variants[(variants.indexOf(active) + step + variants.length) % variants.length];
@@ -150,7 +202,7 @@ const inlineSettings = [...$('dial-options').querySelectorAll('select')].map(sel
           }
           if (select.selectedOptions.length + Number(Boolean(selectedRegion)) >= 8) {
             radio.checked = false;
-            $('status').textContent = '最多选择 8 个窗口。';
+            $('status').textContent = t('最多选择 8 个窗口。');
             return;
           }
         }
@@ -276,7 +328,7 @@ if (native) {
   });
   $('gem-cancel').onclick = () => setGemMenu(false);
   $('gem-exit').onclick = () => native.exit().catch(error => {
-    $('gem-error').textContent = String(error);
+    $('gem-error').textContent = message(error);
     $('gem-error').hidden = false;
   });
   let press;
@@ -329,7 +381,7 @@ function setSelectedRegion(region) {
   const label = $('region-size');
   label.hidden = !region;
   $('clear-region').hidden = !region;
-  $('pick-region').textContent = region ? '重新框选' : '框选区域';
+  $('pick-region').textContent = region ? t('重新框选') : t('框选区域');
   if (region) {
     const [, left, top, right, bottom] = region.split(':').map(Number);
     label.textContent = (right - left) + ' × ' + (bottom - top);
@@ -343,11 +395,11 @@ if (native) {
     if (pickingRegion || !['idle', 'saved', 'failed'].includes(session?.phase)) return;
     const selectedWindows = [...$('source').selectedOptions].filter(option => option.value !== 'primary-display');
     if (selectedWindows.length >= 8) {
-      $('status').textContent = '请先取消一个窗口，再添加框选区域。';
+      $('status').textContent = t('请先取消一个窗口，再添加框选区域。');
       return;
     }
     pickingRegion = true;
-    $('status').textContent = '拖动鼠标框选，按 Esc 或右键取消。';
+    $('status').textContent = t('拖动鼠标框选，按 Esc 或右键取消。');
     try {
       const region = await native.pickRegion();
       if (region) {
@@ -357,7 +409,7 @@ if (native) {
         persistConfig();
       }
     } catch (error) {
-      $('status').textContent = String(error);
+      $('status').textContent = message(error);
     } finally {
       pickingRegion = false;
       refreshNativePreview();
@@ -391,10 +443,10 @@ function refreshNativePreview() {
       ...cameraSettings(),
       cursorColor: cursorColor(),
     });
-  }).catch(error => { $('status').textContent = String(error); });
+  }).catch(error => { $('status').textContent = message(error); });
 }
 $('hide-preview').onclick = togglePreview;
-adapter.subscribe(state => {
+function renderSession(state) {
   const wasRunning = session?.phase === 'recording';
   session = state;
   const { phase, source, missing } = state;
@@ -427,21 +479,21 @@ adapter.subscribe(state => {
   syncAudioControls(locked);
   for (const button of dialButtons) button.disabled = locked;
   $('record').disabled = !source || (locked && !(native && running));
-  $('record').textContent = running ? '结束录制' : phase === 'saving' ? '正在保存…' : '开始录制';
-  $('preview-label').textContent = phase === 'saved' ? '成片预览（模拟）' : '实时预览';
+  $('record').textContent = running ? t('结束录制') : phase === 'saving' ? t('正在保存…') : t('开始录制');
+  $('preview-label').textContent = phase === 'saved' ? t('成片预览（模拟）') : t('实时预览');
   if (!running) $('preview').hidden = false;
   else if (!wasRunning) $('preview').hidden = $('preview-start').value === 'hide';
   $('hide-preview').hidden = !running;
   $('sample').hidden = Boolean(native) || !source || missing;
   $('pointer').hidden = true;
-  $('empty').textContent = !source ? '选择采集来源后查看画面' : missing ? '窗口不可用 · 使用虚拟背景' : '';
+  $('empty').textContent = !source ? t('选择采集来源后查看画面') : missing ? t('窗口不可用 · 使用虚拟背景') : '';
   $('status').textContent = {
-    idle: source === 'window' ? '仅采集所选窗口，超出部分填入背景。' :
-      source === 'screen' ? '整屏采集可能包含其他窗口和通知。' : '选择窗口或显示器，确认手机画面后再开录。',
-    recording: missing ? '采集窗口已丢失，成片继续显示背景。' : '录制中（模拟）',
-    saving: '正在封装 MP4（模拟）',
-    saved: '模拟保存成功 · 原型未生成文件',
-    failed: '模拟保存失败 · 请检查输出位置后重试',
+    idle: source === 'window' ? t('仅采集所选窗口，超出部分填入背景。') :
+      source === 'screen' ? t('整屏采集可能包含其他窗口和通知。') : t('选择窗口或显示器，确认手机画面后再开录。'),
+    recording: missing ? t('采集窗口已丢失，成片继续显示背景。') : t('录制中（模拟）'),
+    saving: t('正在封装 MP4（模拟）'),
+    saved: t('模拟保存成功 · 原型未生成文件'),
+    failed: t('模拟保存失败 · 请检查输出位置后重试'),
   }[phase];
   if (native) {
     const feedback = $('native-feedback');
@@ -458,25 +510,26 @@ adapter.subscribe(state => {
     mark.textContent = saving ? progress + '%' : phase === 'starting' ? '·' : '';
     mark.hidden = phase !== 'starting' && phase !== 'saving';
     feedback.querySelector('.result-title').textContent = ({
-      starting: '准备录制', saving: '正在保存', saved: '视频已保存', failed: '保存未完成',
+      starting: t('准备录制'), saving: t('正在保存'), saved: t('视频已保存'), failed: t('保存未完成'),
     })[phase] || '';
     $('open-folder').hidden = phase !== 'saved';
     $('play-file').hidden = phase !== 'saved';
     $('result-back').hidden = phase === 'starting' || phase === 'saving';
-    $('preview-label').textContent = '录制画幅';
-    $('empty').textContent = source ? '开始录制后打开实时预览' : '请先选择要录制的窗口';
+    $('preview-label').textContent = t('录制画幅');
+    $('empty').textContent = source ? t('开始录制后打开实时预览') : t('请先选择要录制的窗口');
     $('status').textContent = ({
-      idle: source === 'primary-display' ? '整屏可能包含其他窗口与通知。' :
-        source ? 'F8 显示或隐藏预览 · F9 开录' :
-        savedConfig.sourceNames?.length ? '请确认采集来源 · 上次：' + savedConfig.sourceNames.join('、') : '请先选择采集来源',
-      starting: '正在启动录制…', recording: '正在录制 · F8 切换预览 · F9 结束',
-      saving: '正在封装 MP4', saved: '点击播放，或打开保存文件夹', failed: state.error || '录制失败',
+      idle: source === 'primary-display' ? t('整屏可能包含其他窗口与通知。') :
+        source ? t('F8 显示或隐藏预览 · F9 开录') :
+        savedConfig.sourceNames?.length ? t('请确认采集来源 · 上次：') + savedConfig.sourceNames.map(sourceLabel).join(language === 'en' ? ', ' : '、') : t('请先选择采集来源'),
+      starting: t('正在启动录制…'), recording: t('正在录制 · F8 切换预览 · F9 结束'),
+      saving: t('正在封装 MP4'), saved: t('点击播放，或打开保存文件夹'), failed: state.error ? message(state.error) : t('录制失败'),
     })[phase];
     $('file-actions').hidden = phase !== 'saved';
-    $('play-file').onclick = () => native.show(state.path, false).catch(error => { $('status').textContent = String(error); });
-    $('open-folder').onclick = () => native.show(state.path, true).catch(error => { $('status').textContent = String(error); });
+    $('play-file').onclick = () => native.show(state.path, false).catch(error => { $('status').textContent = message(error); });
+    $('open-folder').onclick = () => native.show(state.path, true).catch(error => { $('status').textContent = message(error); });
   }
-});
+}
+adapter.subscribe(renderSession);
 $('source').onchange = () => {
   sourceSelectionTouched = true;
   adapter.select(sourceSelection());
@@ -539,8 +592,8 @@ function meterSelections() {
 }
 function showLevel(kind, db, error = '') {
   $(kind + '-meter').value = db;
-  $(kind + '-db').textContent = error ? '不可用' : (db <= -60 ? '−∞' : String(Math.round(db))) + ' dBFS';
-  $(kind + '-level').title = error;
+  $(kind + '-db').textContent = error ? t('不可用') : (db <= -60 ? '−∞' : String(Math.round(db))) + ' dBFS';
+  $(kind + '-level').title = message(error || '');
 }
 async function updateAudioLevels() {
   const selections = meterSelections();
@@ -558,7 +611,7 @@ async function updateAudioLevels() {
       }
     } catch {
       for (const [index, kind] of ['input', 'output'].entries()) {
-        if (selections[index]) showLevel(kind, -60, '无法读取 Windows 音频电平。');
+        if (selections[index]) showLevel(kind, -60, t('无法读取 Windows 音频电平。'));
       }
     } finally {
       meterRequestPending = false;
@@ -583,16 +636,16 @@ if (native) {
     if (!audioDevices[kind].length) {
       $(id).disabled = true;
       $(id).dataset.unavailable = 'true';
-      $(id).closest('label').title = '未发现兼容设备';
+      $(id).closest('label').title = t('未发现兼容设备');
       missingAudio.push(kind);
     }
   }
   $('audio-unavailable').hidden = missingAudio.length === 0;
   $('audio-unavailable').textContent = missingAudio.includes('input')
-    ? '未找到麦克风。请检查 Windows 声音设置和桌面应用的麦克风权限。'
-    : '未找到播放设备。请在 Windows 声音设置中确认扬声器已启用。';
-  $('output-meter').setAttribute('aria-label', '电脑声音电平');
-  $('input-meter').setAttribute('aria-label', '麦克风电平');
+    ? t('未找到麦克风。请检查 Windows 声音设置和桌面应用的麦克风权限。')
+    : t('未找到播放设备。请在 Windows 声音设置中确认扬声器已启用。');
+  $('output-meter').setAttribute('aria-label', t('电脑声音电平'));
+  $('input-meter').setAttribute('aria-label', t('麦克风电平'));
   restoreSelect('input-device', savedConfig.inputDevice);
   restoreSelect('output-device', savedConfig.outputDevice);
   $('microphone').checked = !$('microphone').disabled && savedConfig.microphone === true;
@@ -703,6 +756,28 @@ $('frame').addEventListener('pointerleave', () => {
   $('frame').style.setProperty('--zoom', '1');
   $('pointer').hidden = true;
 });
+registerTranslations();
+function applyLanguage(next) {
+  language = next === 'en' ? 'en' : 'zh-CN';
+  document.documentElement.lang = language;
+  $('language').value = language;
+  for (const translate of translatedNodes) translate();
+  $('save-folder').textContent = outputFolder || t('视频 / ScreenLive');
+  setSelectedRegion(selectedRegion);
+  showVariant();
+  if (session) renderSession(session);
+}
+let initialLanguage = savedConfig.language;
+if (!native) {
+  try { initialLanguage = localStorage.getItem('screenlive-language'); } catch {}
+}
+applyLanguage(initialLanguage);
+$('language').onchange = () => {
+  applyLanguage($('language').value);
+  if (!native) {
+    try { localStorage.setItem('screenlive-language', language); } catch {}
+  }
+};
 if (native) {
   const controls = $('controls');
   const hint = $('native-hint');
