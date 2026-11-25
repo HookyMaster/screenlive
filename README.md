@@ -1,67 +1,51 @@
-# ScreenLive — Focus-Follow Screen Recorder
+# ScreenLive
 
-A screen recorder that keeps the capture window centered on your mouse. Supports portrait/landscape aspect ratios, dynamic field-of-view zoom, mouse action visualization (click effects / trail), and system/microphone audio recording.
+ScreenLive 是一款 Windows 屏幕录制工具，支持竖屏和常用横屏画幅、鼠标跟随镜头、无边框实时预览，以及电脑声音和麦克风录制。
 
-## ✨ Features
+**[下载 Windows x64 便携版](https://github.com/HookyMaster/screenlive/releases/latest/download/ScreenLive-Windows-x64.zip)** · [查看 Release](https://github.com/HookyMaster/screenlive/releases/latest)
 
-- **Focus-follow recording**: capture window always centers on the cursor with smooth tracking (adjustable follow speed)
-- **Dynamic FOV zoom**: fast, large mouse swipes automatically widen the capture area (see more of the screen), smoothly returning to normal when you slow down; sensitivity adjustable (Low / Medium / High)
-- **Separate input/output resolution**: capture pixels and video pixels are independent — small input → large output uses **nearest-neighbor upscaling (pixel copy)**, large input → small output **downsamples by pixel sampling**
-- **Mouse action visualization**: click effects (left = red, right = blue, middle = yellow ring; scroll = green direction indicator) + mouse trail
-- **Audio recording**: microphone / system audio (requires "Stereo Mix") mixed directly into the video — single-file mp4 with AAC track
-- **Any aspect ratio**: 9:16, 16:9, 1:1, 3:4, 4:3, 9:21 or fully custom pixels; width/height auto-linked for fixed ratios
-- **Live preview**: borderless preview window — drag to move, edge-drag to resize proportionally, always-on-top, with a red border marking the capture area
-- **Self-exclusion**: the app's own windows are excluded from recording
-- **Hardware acceleration**: NVIDIA NVENC / Intel QSV / AMD AMF used automatically when available
+## 安装与首次启动
 
-## 🖥 System Requirements
+1. 下载 ZIP 并完整解压。系统需要 Windows 10 22H2 或 Windows 11（64 位）及 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
+2. 打开 [FFmpeg Windows x64 builds](https://www.gyan.dev/ffmpeg/builds/)，下载 Release builds 下的 Essentials ZIP。把其中 `bin/ffmpeg.exe` 放到 ScreenLive 解压目录，与 `ScreenLive.exe` 同级。FFmpeg 单独提供。
+3. 双击 `ScreenLive.exe`。主程序、采集组件和 WebView2 加载器应保留在同一目录。
 
-- Windows 10 / 11 (x64)
-- No Python or any runtime dependency required
+## 截图教程
 
-## ⬇️ Download & Install
+### 1. 在圆盘选来源
 
-Get the latest build from the [Releases page](https://github.com/HookyMaster/screenlive/releases/latest):
+<img src="docs/screenshots/control-dial.png" width="264" alt="ScreenLive 圆盘，顶部是来源，中心是开始录制按钮">
 
-- `ScreenLive-vX.X.X-win64.zip` — fully self-contained package (runtime + bundled ffmpeg)
+打开「来源」，选择一个或多个应用窗口、整个主显示器，或拖动鼠标「框选区域」。同时选择窗口和框选区域时，只录入已选窗口落在框内的部分。按 Esc 或右键可取消框选。
 
-**Install**: unzip → double-click `ScreenLive.exe`. No installation needed.
+### 2. 设置画幅、预览和声音
 
-## 🎬 Usage
+<img src="docs/screenshots/preview-settings.png" width="264" alt="ScreenLive 预览菜单，包含显示、隐藏和最小取景范围设置">
 
-1. Launch — the settings window appears and the preview opens (red border = capture area)
-2. Choose aspect ratio / pixels, follow speed, audio, etc. in the settings window
-3. Press **F9** or click "Start Recording" to begin; press **F9** again to stop
-4. Videos are saved to `Videos\ScreenLive` by default
+在「画幅」选择输出比例，默认是 9:16、1080 × 1920、30 fps。在「预览」打开实时画面并调整最小取景范围。预览窗口可拖动，拉伸边缘会等比缩放并记住大小。F8 可隐藏或恢复预览。
 
-**Hotkey**: `F9` start/stop recording
+在「声音」分别选播放设备和麦克风，根据实时电平确认输入。在「更多」可以打开鼠标拖尾、选择是否显示本软件并修改保存路径。
 
-**Troubleshooting**:
-- To record internal audio (game/video sound): enable "Stereo Mix" in Sound settings → Recording, then restart the app to select it
-- Resolution/ratio cannot be changed while recording (ffmpeg requires constant frame size) — stop first, then change
+### 3. 开始录制和保存
 
-## 🔨 Build from Source
+点击圆盘中央开始录制。圆盘收成宝石后，点击宝石可展开并结束录制。也可按 F9 开始或停止。保存进度在圆盘外沿显示。默认文件夹为「视频 / ScreenLive」。
 
-```bash
-# Env: Python 3.13, dependencies in project-local .venv
-.venv\Scripts\pip install -r requirements.txt
+## 从源码构建
 
-# Package (full command with icon & bundled ffmpeg):
-.venv\Scripts\pyinstaller --noconfirm --windowed --name ScreenLive ^
-  --icon icon.ico --add-data "icon.ico;." --add-data "icon256.png;." ^
-  --collect-all imageio_ffmpeg --collect-all pynput ^
-  --add-binary ".venv\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe;." ^
-  app.py
+在 Windows 上使用 Rust 和兼容的 Windows C/C++ 构建工具：
+
+```powershell
+cargo build --locked --release --manifest-path desktop-app/Cargo.toml
+cargo build --locked --release --manifest-path platform/windows/Cargo.toml --example record
 ```
 
-Output is in `dist\ScreenLive\` — the whole directory (`ScreenLive.exe` + `_internal\`) is the self-contained package.
+将生成的 `screenlive-desktop.exe` 改名为 `ScreenLive.exe`，将 `record.exe` 改名为 `record-backgrounds.exe`，并与 x64 的 `WebView2Loader.dll`、`ffmpeg.exe` 放在同一目录。加载器来自 [Microsoft WebView2 SDK](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution#files-to-ship-with-the-app)。
 
-## 📖 About
+- `desktop/` 控制圆盘和菜单
+- `desktop-app/` Tauri 应用与设置
+- `core/` 取景、镜头跟随和构图
+- `platform/windows/` Windows 采集、预览和录制
 
-- **Tech stack**: Python 3.13 · Tkinter · numpy · mss (screen capture) · ffmpeg (encode/audio) · pynput (global mouse hook)
-- **Purpose**: built for demo/tutorial recording — mouse trail, click positions and focus are all clearly visible
-- **License**: MIT
+## 许可证
 
----
-
-[中文说明](README.zh-CN.md)
+自 v0.2.0 起，ScreenLive 仅允许非商业使用。商业使用须事先取得 HookyMaster 的书面授权。完整条款见 [LICENSE](LICENSE)。此前按 MIT 发布的 v0.1.0 仍适用 [当时的许可证](docs/LICENSE-v0.1.0-MIT.txt)。第三方组件各自适用原许可，见 [第三方组件说明](THIRD-PARTY-NOTICES.md)。

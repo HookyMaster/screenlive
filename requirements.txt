@@ -1,4 +1,0 @@
-numpy>=2.0
-pynput>=1.7
-imageio-ffmpeg>=0.5
-Pillow>=10.0

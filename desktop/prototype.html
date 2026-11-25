@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ScreenLive · 前端原型</title>
+<script src="./native-startup.js"></script>
+<link rel="stylesheet" href="./prototype.css">
+<div id="startup-gem" aria-hidden="true">✦</div>
+<div id="startup-glow" aria-hidden="true"></div>
+<main id="shell">
+  <header><strong><i></i> ScreenLive</strong><span>交互原型</span></header>
+  <div id="stage">
+    <section id="preview" aria-label="模拟成片预览">
+      <small id="preview-label">实时预览</small>
+      <div id="frame"><button id="hide-preview" hidden type="button" title="隐藏预览（F8）" aria-label="隐藏预览（F8）">×</button><article id="sample">
+        <div class="toolbar">画板　 /　 配色方案</div>
+        <div class="art"><span>设计演示</span><b>色彩与<br>层次</b><div class="orb"></div></div>
+        <div class="swatches"><i></i><i></i><i></i><i></i></div>
+        <div class="toolbar">图层　　颜色　　布局</div>
+      </article><div id="pointer" hidden></div><p id="empty"></p></div>
+      <small id="output-spec">9:16　·　1080 × 1920　·　30 fps</small>
+      <p id="status" role="status" aria-live="polite"></p>
+      <div id="file-actions" hidden><button id="play-file">播放</button> <button id="open-folder">打开文件夹</button></div>
+    </section>
+    <div id="control-dock">
+    <button id="expand-dial" type="button" aria-label="展开控制圆盘" title="展开控制圆盘" aria-controls="controls" aria-expanded="false" hidden><span aria-hidden="true">✦</span></button>
+    <div id="gem-menu" role="group" aria-label="宝石菜单" hidden>
+      <button id="gem-exit" type="button">退出程序</button>
+      <button id="gem-cancel" type="button">取消</button>
+      <small id="gem-error" role="status" hidden></small>
+    </div>
+    <section id="controls" aria-label="录制控制圆盘">
+      <svg id="save-ring" viewBox="0 0 258 258" role="progressbar" aria-label="保存 MP4" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+        <circle class="save-track" cx="129" cy="129" r="124"/>
+        <circle id="save-arc" cx="129" cy="129" r="124" pathLength="100"/>
+        <circle id="save-light" cx="129" cy="5" r="3.2"/>
+      </svg>
+      <button id="collapse-dial" type="button" title="收起圆盘" aria-label="收起圆盘">−</button>
+      <div id="settings">
+        <div id="dial" role="group" aria-label="录制设置">
+          <svg id="dial-clips" width="0" height="0" aria-hidden="true"><defs>
+            <linearGradient id="sector-bevel" x1="0" y1="0" x2=".8" y2="1">
+              <stop offset="0" stop-color="white" stop-opacity=".72"/>
+              <stop offset=".52" stop-color="white" stop-opacity=".10"/>
+              <stop offset="1" stop-color="#64748b" stop-opacity=".27"/>
+            </linearGradient>
+          </defs></svg>
+          <svg id="dial-relief" viewBox="0 0 1 1" aria-hidden="true"></svg>
+          <button type="button" data-setting="source">来源</button>
+          <button type="button" data-setting="ratio">画幅</button>
+          <button type="button" data-setting="mode">构图</button>
+          <button type="button" data-setting="background">背景</button>
+          <button type="button" class="inner-key" data-setting="audio-controls">声音</button>
+          <button type="button" class="inner-key" data-setting="preview-start">预览</button>
+          <button type="button" class="inner-key" data-setting="extra-controls">更多</button>
+          <button type="button" class="inner-key" data-setting="appearance">外观</button>
+          <button type="button" id="record" disabled>开始录制</button>
+        </div>
+        <div id="dial-detail" hidden>
+        <button id="dial-back" type="button">返回</button>
+        <div id="region-controls" hidden>
+          <button id="pick-region" type="button">框选区域</button>
+          <button id="clear-region" type="button" hidden>清除</button>
+          <small id="region-size" hidden></small>
+        </div>
+        <div id="dial-options">
+        <label>采集来源<select id="source"><option value="">选择采集来源</option><option value="window">指定窗口 · 设计画板</option><option value="screen">整个屏幕 · 显示器 1</option></select></label>
+        <label>输出画幅<select id="ratio"><option value="9:16">9:16 · 竖屏</option><option value="16:9">16:9 · 横屏</option><option value="1:1">1:1 · 方形</option><option value="4:5">4:5 · 竖图</option><option value="4:3">4:3 · 横屏</option><option value="3:4">3:4 · 竖图</option></select></label>
+        <label>构图<select id="mode"><option value="follow">镜头跟随</option><option value="fit">完整显示</option></select></label>
+        <label>虚拟背景<select id="background"><option value="gradient">深海渐变</option><option value="solid">深灰纯色</option><option value="mist">云雾蓝</option><option value="mint">薄荷绿</option><option value="sunset">暖霞粉</option><option value="lavender">薰衣草紫</option><option value="apricot">杏子橙</option><option value="teal">海盐青</option><option value="sand">暖砂米</option></select></label>
+        <label>实时预览<select id="preview-start"><option value="show">显示实时预览</option><option value="hide">隐藏预览（F8 可恢复）</option></select></label>
+        <label>控制面板外观<select id="appearance"><option value="mint">薄荷磨砂</option><option value="peach">蜜桃暖光</option><option value="blue">晴空冰蓝</option><option value="lilac">浅雾紫</option><option value="cream">奶油黄</option><option value="rose">玫瑰粉</option><option value="jade">青瓷绿</option></select></label>
+        </div>
+      <fieldset id="audio-controls">
+        <legend>录制声音</legend>
+        <label><input id="system-audio" type="checkbox" aria-describedby="audio-scope">电脑声音</label>
+        <label><input id="microphone" type="checkbox">麦克风</label>
+        <label class="audio-device" id="output-row" hidden>播放设备<select id="output-device"></select></label>
+        <div class="audio-level" id="output-level" hidden><meter id="output-meter" min="-60" max="0" low="-45" high="-6" optimum="-18" value="-60" aria-label="电脑声音电平（模拟）"></meter><span id="output-db">−∞ dBFS</span></div>
+        <label class="audio-device" id="input-row" hidden>输入设备<select id="input-device"></select></label>
+        <div class="audio-level" id="input-level" hidden><meter id="input-meter" min="-60" max="0" low="-45" high="-6" optimum="-18" value="-60" aria-label="麦克风电平（模拟）"></meter><span id="input-db">−∞ dBFS</span></div>
+        <small id="audio-demo" hidden>模拟电平 · 未连接真实设备</small>
+        <small id="audio-unavailable" hidden></small>
+        <small id="audio-scope" hidden>电脑声音可能包含其他应用的声音。</small>
+      </fieldset>
+      <label id="preview-range" hidden>最小取景范围 <output id="close-value">70%</output><input id="close-range" type="range" min="25" max="100" step="5" value="70"></label>
+      <div id="extra-controls">
+        <label id="cursor-trail-option"><input id="cursor-trail" type="checkbox">鼠标拖尾</label>
+        <label id="include-panel-option"><input id="include-panel" type="checkbox">显示本软件</label>
+        <div id="save-location" hidden>
+          <strong>文件保存路径</strong>
+          <output id="save-folder">视频 / ScreenLive</output>
+          <div><button id="pick-folder" type="button">选择文件夹</button> <button id="reset-folder" type="button">恢复默认</button></div>
+        </div>
+        <label id="failure"><input id="fail" type="checkbox">模拟保存失败</label>
+        <small>F9 开始或停止 · F8 隐藏或恢复预览</small>
+      </div>
+        </div>
+      </div>
+      </div>
+    </section>
+    </div>
+  </div>
+</main>
+<nav aria-label="切换设计布局"><button id="prev" aria-label="上一布局">←</button><span id="variant"></span><button id="next" aria-label="下一布局">→</button></nav>
+<script src="./prototype-backend.js"></script>
+<script src="./native-backend.js"></script>
+<script src="./prototype.js"></script>
+</html>

@@ -1,0 +1,15 @@
+[package]
+name = "screenlive-desktop"
+version = "0.2.0"
+edition = "2024"
+
+[build-dependencies]
+tauri-build = "2.6.1"
+
+[dependencies]
+base64 = "0.22.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = "2.11.1"
+screenlive-windows = { path = "../platform/windows" }
+windows = { version = "0.61.3", features = ["Win32_Graphics_Dwm", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
