@@ -1,51 +1,123 @@
 # ScreenLive
 
-ScreenLive 是一款 Windows 屏幕录制工具，支持竖屏和常用横屏画幅、鼠标跟随镜头、无边框实时预览，以及电脑声音和麦克风录制。
+English · [简体中文](README.zh-CN.md)
 
-**[下载 Windows x64 便携版](https://github.com/HookyMaster/screenlive/releases/latest/download/ScreenLive-Windows-x64.zip)** · [查看 Release](https://github.com/HookyMaster/screenlive/releases/latest)
+ScreenLive is a Windows screen recorder with portrait and landscape output, mouse-follow framing, a borderless live preview, and system and microphone audio.
 
-## 安装与首次启动
+**[Download ScreenLive for Windows x64](https://github.com/HookyMaster/screenlive/releases/latest/download/ScreenLive-Windows-x64.zip)** · [Release notes and checksums](https://github.com/HookyMaster/screenlive/releases/latest)
 
-1. 下载 ZIP 并完整解压。系统需要 Windows 10 22H2 或 Windows 11（64 位）及 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
-2. 打开 [FFmpeg Windows x64 builds](https://www.gyan.dev/ffmpeg/builds/)，下载 Release builds 下的 Essentials ZIP。把其中 `bin/ffmpeg.exe` 放到 ScreenLive 解压目录，与 `ScreenLive.exe` 同级。FFmpeg 单独提供。
-3. 双击 `ScreenLive.exe`。主程序、采集组件和 WebView2 加载器应保留在同一目录。
+## Install and launch
 
-## 截图教程
+1. Download and extract the entire ZIP. ScreenLive requires 64-bit Windows 10 22H2 or Windows 11 and the [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
+2. Download the Essentials ZIP from [FFmpeg Windows builds](https://www.gyan.dev/ffmpeg/builds/). Copy its `bin/ffmpeg.exe` into the extracted ScreenLive folder, alongside `ScreenLive.exe`. FFmpeg is a separate download.
+3. Double-click `ScreenLive.exe`. Keep the recorder component and WebView2 loader in the same folder.
 
-### 1. 在圆盘选来源
+## Screenshot walkthrough
 
-<img src="docs/screenshots/control-dial.png" width="264" alt="ScreenLive 圆盘，顶部是来源，中心是开始录制按钮">
+### 1. Right-click to exit
 
-打开「来源」，选择一个或多个应用窗口、整个主显示器，或拖动鼠标「框选区域」。同时选择窗口和框选区域时，只录入已选窗口落在框内的部分。按 Esc 或右键可取消框选。
+Right-click the gem and choose Exit to close ScreenLive.
 
-### 2. 设置画幅、预览和声音
+![Right-click to exit](docs/screenshots/01-right-click-to-exit.png)
 
-<img src="docs/screenshots/preview-settings.png" width="264" alt="ScreenLive 预览菜单，包含显示、隐藏和最小取景范围设置">
+### 2. Expand the dial
 
-在「画幅」选择输出比例，默认是 9:16、1080 × 1920、30 fps。在「预览」打开实时画面并调整最小取景范围。预览窗口可拖动，拉伸边缘会等比缩放并记住大小。F8 可隐藏或恢复预览。
+Left-click the gem to open the control dial.
 
-在「声音」分别选播放设备和麦克风，根据实时电平确认输入。在「更多」可以打开鼠标拖尾、选择是否显示本软件并修改保存路径。
+![Expand the dial](docs/screenshots/02-left-click-to-expand-dial.png)
 
-### 3. 开始录制和保存
+### 3. Collapse the dial
 
-点击圆盘中央开始录制。圆盘收成宝石后，点击宝石可展开并结束录制。也可按 F9 开始或停止。保存进度在圆盘外沿显示。默认文件夹为「视频 / ScreenLive」。
+Click the collapse button at the upper left to return to the gem.
 
-## 从源码构建
+![Collapse the dial](docs/screenshots/03-left-click-to-collapse-dial.png)
 
-在 Windows 上使用 Rust 和兼容的 Windows C/C++ 构建工具：
+### 4. Dial controls
+
+The center button starts or stops recording. The surrounding buttons open settings.
+
+![Dial controls](docs/screenshots/04-dial-controls.png)
+
+### 5. Navigate the submenus
+
+Choose an option in the submenu and use Back to return to the dial.
+
+![Navigate the submenus](docs/screenshots/05-submenu-navigation.png)
+
+### 6. Select capture sources
+
+Select one or more windows, the primary display, or a custom region. When a region and windows are both selected, only the selected windows within the region are captured.
+
+![Select capture sources](docs/screenshots/06-select-multiple-capture-sources.png)
+
+### 7. Show the live preview
+
+Turn on the live preview to check the framing before recording. Drag the window to move it, or resize it by dragging an edge.
+
+![Show the live preview](docs/screenshots/07-live-preview.png)
+
+### 8. Avoid recursive preview
+
+When ScreenLive is included in the recording, its preview area uses a background placeholder to avoid a feedback loop.
+
+![Avoid recursive preview](docs/screenshots/08-preview-recursion-prevention.png)
+
+### 9. Adjust minimum framing
+
+Use the Preview menu to adjust the tightest framing in mouse-follow mode.
+
+![Adjust minimum framing](docs/screenshots/09-minimum-framing-range.png)
+
+### 10. Choose an appearance
+
+Change the dial theme in Appearance. The pointer marker and trail follow the selected colors.
+
+![Choose an appearance](docs/screenshots/10-appearance-themes.png)
+
+### 11. Choose a fill background
+
+Select a background for areas left empty by the framing or capture sources.
+
+![Choose a fill background](docs/screenshots/11-background-fill.png)
+
+### 12. Open more settings
+
+Set the save folder, enable the mouse trail, or include ScreenLive in the capture.
+
+![Open more settings](docs/screenshots/12-more-settings.png)
+
+### 13. Choose an output aspect ratio
+
+Choose the aspect ratio for the destination. The default is 9:16 at 1080 × 1920 and 30 fps.
+
+![Choose an output aspect ratio](docs/screenshots/13-output-aspect-ratios.png)
+
+### 14. Mix system and microphone audio
+
+Choose the playback and microphone devices separately, then check their live levels.
+
+![Mix system and microphone audio](docs/screenshots/14-system-and-microphone-audio.png)
+
+## Start and stop recording
+
+Click the center of the dial or press F9 to start or stop recording. Press F8 to hide or restore the live preview. Files are saved to Videos / ScreenLive by default.
+
+## Build from source
+
+On Windows, use Rust and a compatible Windows C/C++ toolchain.
 
 ```powershell
 cargo build --locked --release --manifest-path desktop-app/Cargo.toml
 cargo build --locked --release --manifest-path platform/windows/Cargo.toml --example record
 ```
 
-将生成的 `screenlive-desktop.exe` 改名为 `ScreenLive.exe`，将 `record.exe` 改名为 `record-backgrounds.exe`，并与 x64 的 `WebView2Loader.dll`、`ffmpeg.exe` 放在同一目录。加载器来自 [Microsoft WebView2 SDK](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution#files-to-ship-with-the-app)。
+Rename `screenlive-desktop.exe` to `ScreenLive.exe` and `record.exe` to `record-backgrounds.exe`. Place them alongside the x64 `WebView2Loader.dll` and `ffmpeg.exe`. The loader comes from the [Microsoft WebView2 SDK](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution#files-to-ship-with-the-app).
 
-- `desktop/` 控制圆盘和菜单
-- `desktop-app/` Tauri 应用与设置
-- `core/` 取景、镜头跟随和构图
-- `platform/windows/` Windows 采集、预览和录制
+- `desktop/` contains the control dial and menus.
+- `desktop-app/` contains the Tauri application and settings.
+- `core/` contains the framing and mouse-follow logic.
+- `platform/windows/` contains Windows capture, preview, and recording.
 
-## 许可证
+## License
 
-自 v0.2.0 起，ScreenLive 仅允许非商业使用。商业使用须事先取得 HookyMaster 的书面授权。完整条款见 [LICENSE](LICENSE)。此前按 MIT 发布的 v0.1.0 仍适用 [当时的许可证](docs/LICENSE-v0.1.0-MIT.txt)。第三方组件各自适用原许可，见 [第三方组件说明](THIRD-PARTY-NOTICES.md)。
+ScreenLive v0.2.0 and later are available for noncommercial use under the [ScreenLive license](LICENSE). Commercial use requires prior written permission from HookyMaster. The previously published v0.1.0 remains under its [original MIT license](docs/LICENSE-v0.1.0-MIT.txt). See [third-party notices](THIRD-PARTY-NOTICES.md) for dependency licenses.
