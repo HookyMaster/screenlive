@@ -1,0 +1,37 @@
+name: Build ScreenLive macOS
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'platform/macos/**'
+      - '.github/workflows/macos.yml'
+  pull_request:
+    paths:
+      - 'platform/macos/**'
+      - '.github/workflows/macos.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build and package
+        run: bash platform/macos/build.sh "${{ matrix.arch }}"
+      - name: Verify architecture
+        run: |
+          lipo -verify_arch "${{ matrix.arch }}" platform/macos/dist/ScreenLive.app/Contents/MacOS/ScreenLive
+          codesign --verify --strict platform/macos/dist/ScreenLive.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreenLive-macOS-${{ matrix.arch }}
+          path: platform/macos/dist/ScreenLive-macOS-${{ matrix.arch }}.zip
+          if-no-files-found: error
