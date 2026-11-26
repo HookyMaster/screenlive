@@ -1,0 +1,21 @@
+name: Windows follow camera test
+on:
+  push:
+    branches: [windows/follow-camera-017]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --locked --manifest-path core/Cargo.toml
+      - run: cargo build --locked --release --manifest-path platform/windows/Cargo.toml --example record
+      - name: Package recorder update
+        shell: pwsh
+        run: |
+          Copy-Item platform/windows/target/release/examples/record.exe record-backgrounds.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreenLive-Windows-x64-recorder-update
+          path: record-backgrounds.exe

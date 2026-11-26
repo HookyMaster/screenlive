@@ -342,6 +342,7 @@ fn main() -> Result<(), AnyError> {
         let mut f9_down = key_down(VK_F9.0);
         let mut stop_requested = false;
         let rate = if preview_only { 15 } else { FPS };
+        let mut last_camera_tick = Instant::now();
         let frame_period = 1.0 / f64::from(rate);
         let mut cursor_history = VecDeque::<(Instant, Point)>::new();
         'frames: for index in 0..seconds * rate {
@@ -413,7 +414,13 @@ fn main() -> Result<(), AnyError> {
                     })
             });
             let pointer = hovered.map(|(p, _)| p);
-            camera.update_for_surface(bounds, pointer, hovered.map(|(_, r)| r), frame_period);
+            let now = Instant::now();
+            let dt = now.duration_since(last_camera_tick).as_secs_f64();
+            last_camera_tick = now;
+            // The high bit covers a held drag; the low bit can catch a tap between frames.
+            let button_action = [0x01, 0x02, 0x04, 0x05, 0x06].into_iter()
+                .fold(false, |pressed, key| (unsafe { GetAsyncKeyState(key) } != 0) || pressed);
+            camera.update_with_buttons(bounds, pointer, hovered.map(|(_, r)| r), dt, button_action);
             let fill = if preview_only {
                 &cached_background
             } else {
