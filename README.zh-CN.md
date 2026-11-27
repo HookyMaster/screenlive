@@ -2,21 +2,37 @@
 
 [English](README.md) · 简体中文
 
-ScreenLive 是一款 Windows 屏幕录制工具，支持竖屏和常用横屏画幅、鼠标跟随镜头、无边框实时预览，以及电脑声音和麦克风录制。
+ScreenLive 是一款支持 Windows 与 macOS 的屏幕录制工具，支持竖屏和常用横屏画幅、鼠标跟随镜头、无边框实时预览，以及电脑声音和麦克风录制。
 
-**[下载 Windows x64 便携版](https://github.com/HookyMaster/screenlive/releases/latest/download/ScreenLive-Windows-x64.zip)** · [查看 Release](https://github.com/HookyMaster/screenlive/releases/latest)
+**[下载 Windows x64 便携版](https://github.com/HookyMaster/screenlive/releases/latest/download/ScreenLive-Windows-x64.zip)**
+
+**[下载 macOS Apple 芯片版](https://github.com/HookyMaster/screenlive/releases/latest/download/ScreenLive-macOS-arm64.zip)** · **[下载 macOS Intel 版](https://github.com/HookyMaster/screenlive/releases/latest/download/ScreenLive-macOS-x86_64.zip)**
+
+[查看 Release](https://github.com/HookyMaster/screenlive/releases/latest)
 
 ## 安装与首次启动
+
+### Windows
 
 1. 下载 ZIP 并完整解压。系统需要 Windows 10 22H2 或 Windows 11（64 位）及 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
 2. 打开 [FFmpeg Windows x64 builds](https://www.gyan.dev/ffmpeg/builds/)，下载 Release builds 下的 Essentials ZIP。把其中 `bin/ffmpeg.exe` 放到 ScreenLive 解压目录，与 `ScreenLive.exe` 同级。FFmpeg 单独提供。
 3. 双击 `ScreenLive.exe`。主程序、采集组件和 WebView2 加载器应保留在同一目录。
 
+### macOS
+
+下载对应芯片的 ZIP 并解压 ScreenLive.app。系统需要 macOS 15 或更新版本。打开应用，按提示授予屏幕录制和声音权限。macOS 采用系统原生录制，无需 FFmpeg。当前构建为 ad-hoc 签名，尚未进行 Apple 公证。
+
+参见 [macOS 构建与使用说明](platform/macos/README.md)。
+
 ## 界面语言
 
 打开 **更多 → 语言 → English** 即可立即切换到英文。要切回中文，选择 **More → Language → Simplified Chinese**。语言选择会自动保存。
 
-v0.2.1 下载包包含语言切换和英文排版修正。下方截图使用中文界面。
+下方截图使用 Windows 中文界面。
+
+## Windows 镜头设置（v0.3.0）
+
+在「预览」中分别调整「最小取景范围」和「平移跟随范围」。前者按输出画幅计算，后者按原始采集画面比例计算，并显示为虚线框。鼠标越界或点击时聚焦，静止一秒后拉远。预览窗口移动后会在本次程序运行期间保持位置。
 
 ## 截图教程
 
@@ -123,6 +139,7 @@ cargo build --locked --release --manifest-path platform/windows/Cargo.toml --exa
 - `desktop-app/` Tauri 应用与设置
 - `core/` 取景、镜头跟随和构图
 - `platform/windows/` Windows 采集、预览和录制
+- `platform/macos/` macOS 原生应用、采集和录制，参见 [构建说明](platform/macos/README.md)
 
 ## 许可证
 

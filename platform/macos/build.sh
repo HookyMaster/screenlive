@@ -11,6 +11,7 @@ xcrun swiftc -swift-version 5 -parse-as-library -module-cache-path "$OUT/module-
 cp Info.plist "$APP/Contents/Info.plist"
 mkdir -p "$APP/Contents/Resources/desktop"
 cp desktop/* "$APP/Contents/Resources/desktop/"
+cp ../../LICENSE "$APP/Contents/Resources/LICENSE"
 codesign --force --sign "${SCREENLIVE_SIGN_IDENTITY:--}" "$APP"
 codesign --verify --strict "$APP"
 ditto -c -k --keepParent "$APP" "$OUT/ScreenLive-macOS-$ARCH.zip"

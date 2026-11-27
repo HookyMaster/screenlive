@@ -2,21 +2,37 @@
 
 English · [简体中文](README.zh-CN.md)
 
-ScreenLive is a Windows screen recorder with portrait and landscape output, mouse-follow framing, a borderless live preview, and system and microphone audio.
+ScreenLive is a Windows and macOS screen recorder with portrait and landscape output, mouse-follow framing, a borderless live preview, and system and microphone audio.
 
-**[Download ScreenLive for Windows x64](https://github.com/HookyMaster/screenlive/releases/latest/download/ScreenLive-Windows-x64.zip)** · [Release notes and checksums](https://github.com/HookyMaster/screenlive/releases/latest)
+**[Download ScreenLive for Windows x64](https://github.com/HookyMaster/screenlive/releases/latest/download/ScreenLive-Windows-x64.zip)**
+
+**[Download macOS Apple Silicon](https://github.com/HookyMaster/screenlive/releases/latest/download/ScreenLive-macOS-arm64.zip)** · **[Download macOS Intel](https://github.com/HookyMaster/screenlive/releases/latest/download/ScreenLive-macOS-x86_64.zip)**
+
+[Release notes and checksums](https://github.com/HookyMaster/screenlive/releases/latest)
 
 ## Install and launch
+
+### Windows
 
 1. Download and extract the entire ZIP. ScreenLive requires 64-bit Windows 10 22H2 or Windows 11 and the [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
 2. Download the Essentials ZIP from [FFmpeg Windows builds](https://www.gyan.dev/ffmpeg/builds/). Copy its `bin/ffmpeg.exe` into the extracted ScreenLive folder, alongside `ScreenLive.exe`. FFmpeg is a separate download.
 3. Double-click `ScreenLive.exe`. Keep the recorder component and WebView2 loader in the same folder.
 
+### macOS
+
+Download the ZIP for your chip and extract ScreenLive.app. Requires macOS 15 or later. Open the app and grant screen recording and audio permissions when prompted. macOS uses native recording and does not require FFmpeg. The current build is ad-hoc signed, without Apple notarization.
+
+See the [macOS build and usage notes](platform/macos/README.md).
+
 ## Interface language
 
 Open **更多 (More) → 语言 (Language) → English** to switch the interface immediately. To switch back, select **More → Language → Simplified Chinese**. ScreenLive remembers your choice after restart.
 
-The v0.2.1 Windows download includes the language switch and layout fixes for English labels. The walkthrough screenshots show the Chinese interface.
+The walkthrough screenshots show the Chinese Windows interface.
+
+## Windows camera settings (v0.3.0)
+
+The Windows preview menu now has two independent sliders: minimum framing uses the output aspect ratio, and follow range uses the original capture aspect ratio. Moving the pointer outside the dashed range or clicking triggers focus; after one second of inactivity the view widens. The preview window keeps its moved position during the current app session.
 
 ## Screenshot walkthrough
 
@@ -123,6 +139,7 @@ Rename `screenlive-desktop.exe` to `ScreenLive.exe` and `record.exe` to `record-
 - `desktop-app/` contains the Tauri application and settings.
 - `core/` contains the framing and mouse-follow logic.
 - `platform/windows/` contains Windows capture, preview, and recording.
+- `platform/macos/` contains the native macOS application, capture and recording. Use [the macOS build instructions](platform/macos/README.md).
 
 ## License
 

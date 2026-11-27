@@ -1,4 +1,4 @@
-# ScreenLive for macOS 0.1.21
+# ScreenLive for macOS 0.3.0
 
 适用于 macOS 15 及以上版本。通过 macOS 系统选择器选择显示器或窗口，可进一步框选区域。支持实时预览、鼠标跟随、鼠标拖尾、系统音频和麦克风。
 
