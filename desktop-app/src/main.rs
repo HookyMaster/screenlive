@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU8, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -125,6 +125,7 @@ struct Options {
     input_device: Option<String>,
     output_folder: Option<String>,
     close_range: Option<u32>,
+    follow_range: Option<u32>,
     #[serde(default)]
     cursor_trail: bool,
     cursor_color: Option<String>,
@@ -166,6 +167,8 @@ fn camera_args(command: &mut Command, options: &Options) {
     command.args([
         "--close-range",
         &options.close_range.unwrap_or(70).to_string(),
+        "--follow-range",
+        &options.follow_range.or(options.close_range).unwrap_or(70).to_string(),
     ]);
     if options.cursor_trail {
         command.arg("--cursor-trail");
@@ -175,8 +178,18 @@ fn camera_args(command: &mut Command, options: &Options) {
     }
 }
 
+static PREVIEW_POSITION_FILE: OnceLock<PathBuf> = OnceLock::new();
+
+fn preview_position_file() -> &'static PathBuf {
+    PREVIEW_POSITION_FILE.get_or_init(|| {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        std::env::temp_dir().join(format!("screenlive-preview-{}-{stamp}.position", std::process::id()))
+    })
+}
+
 fn preview_args(command: &mut Command, window: &WebviewWindow, include_panel: bool) -> Result<(), String> {
     command.arg("--preview-size-file").arg(config_path(window)?.with_file_name("preview-size"));
+    command.arg("--preview-position-file").arg(preview_position_file());
     if let Ok(hwnd) = window.hwnd() {
         let id = format!("{:p}", hwnd.0);
         command.args(["--preview-near", &id]);
@@ -734,4 +747,7 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("ScreenLive desktop startup failed");
+    if let Some(path) = PREVIEW_POSITION_FILE.get() {
+        let _ = std::fs::remove_file(path);
+    }
 }

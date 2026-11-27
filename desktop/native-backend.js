@@ -49,6 +49,7 @@ const native = (() => {
           outputDevice: settings.systemAudio ? settings.outputDevice : null,
           outputFolder: settings.outputFolder || null,
           closeRange: settings.closeRange,
+          followRange: settings.followRange,
           cursorTrail: settings.cursorTrail,
           cursorColor: settings.cursorColor,
           includePanel: settings.includePanel,

@@ -74,6 +74,7 @@ const screenLiveEnglish = {
   "模拟电平 · 未连接真实设备": "Simulated levels · No physical device connected",
   "电脑声音可能包含其他应用的声音。": "System audio may include sounds from other apps.",
   "最小取景范围": "Min. framing",
+  "平移跟随范围": "Follow range",
   "鼠标拖尾": "Cursor trail",
   "显示本软件": "Include ScreenLive",
   "语言": "Language",

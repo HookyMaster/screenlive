@@ -4,6 +4,7 @@ pub struct Director {
     output: Size,
     mode: Mode,
     close_fraction: f64,
+    follow_fraction: f64,
     bounds: Option<Rect>,
     view: Rect,
     origin: Rect,
@@ -23,7 +24,7 @@ impl Director {
         self.output = size;
     }
 
-    pub fn new(output: Size, mode: Mode, close_percent: u32) -> Self {
+    pub fn new(output: Size, mode: Mode, close_percent: u32, follow_percent: u32) -> Self {
         let empty = Rect {
             x: 0.,
             y: 0.,
@@ -34,6 +35,7 @@ impl Director {
             output,
             mode,
             close_fraction: f64::from(close_percent.clamp(25, 100)) / 100.,
+            follow_fraction: f64::from(follow_percent.clamp(25, 100)) / 100.,
             bounds: None,
             view: empty,
             origin: empty,
@@ -67,7 +69,8 @@ impl Director {
         let ratio = f64::from(self.output.width) / f64::from(self.output.height);
         let mid = Point { x: bounds.x + bounds.width / 2., y: bounds.y + bounds.height / 2. };
         let overview = centered_view(mid, bounds.height.max(bounds.width / ratio), ratio);
-        let height = self.minimum_height(active.unwrap_or(bounds), ratio);
+        let source = active.unwrap_or(bounds);
+        let height = self.minimum_height(source, ratio);
         if self.bounds != Some(bounds) {
             self.bounds = Some(bounds);
             self.view = overview;
@@ -86,7 +89,7 @@ impl Director {
             if moved || button_action { self.idle = 0.; }
         }
         let crossed = pointer.zip(self.anchor).is_some_and(|(p, anchor)| {
-            let r = centered_view(anchor, height, ratio);
+            let r = self.follow_range(anchor, source);
             p.x < r.x || p.x > r.x+r.width || p.y < r.y || p.y > r.y+r.height
         });
         let mut focused = self.focused || (pointer.is_some() && (button_action || (moved && crossed)));
@@ -150,22 +153,31 @@ impl Director {
         bounds.height.min(bounds.width / ratio) * self.close_fraction
     }
 
-    /// The preview guide follows the pointer independently of the held camera.
-    pub fn minimum_guide(&self, pointer: Point, active: Rect) -> Option<Rect> {
+    fn follow_range(&self, center: Point, source: Rect) -> Rect {
+        let width = source.width * self.follow_fraction;
+        let height = source.height * self.follow_fraction;
+        Rect {
+            x: center.x - width / 2.,
+            y: center.y - height / 2.,
+            width,
+            height,
+        }
+    }
+
+    /// The preview guide shares the source-relative movement threshold.
+    pub fn follow_guide(&self, pointer: Point, active: Rect) -> Option<Rect> {
         self.bounds?;
         if self.mode != Mode::Follow {
             return None;
         }
-        let ratio = f64::from(self.output.width) / f64::from(self.output.height);
         let scale = f64::from(self.output.height) / self.view.height;
         let pointer = if self.focused { pointer } else { self.anchor.unwrap_or(pointer) };
-        let height = self.minimum_height(active, ratio) * scale;
-        let width = height * ratio;
+        let range = self.follow_range(pointer, active);
         Some(Rect {
-            x: (pointer.x - self.view.x) * scale - width / 2.,
-            y: (pointer.y - self.view.y) * scale - height / 2.,
-            width,
-            height,
+            x: (range.x - self.view.x) * scale,
+            y: (range.y - self.view.y) * scale,
+            width: range.width * scale,
+            height: range.height * scale,
         })
     }
 }
@@ -195,7 +207,7 @@ mod tests {
     fn click_hold_and_idle_use_mac_timings() {
         let bounds = Rect { x:0., y:0., width:1600., height:900. };
         let p = Some(Point {x:800.,y:450.});
-        let mut d = Director::new(Size {width:100,height:100},Mode::Follow,25);
+        let mut d = Director::new(Size {width:100,height:100},Mode::Follow,25,70);
         d.update(Some(bounds),p,0.);
         assert_eq!(d.view.height,1600.);
         d.update_with_buttons(Some(bounds),p,None,0.,true);
@@ -214,15 +226,19 @@ mod tests {
     #[test]
     fn guide_stays_at_rest_anchor_until_crossed() {
         let bounds = Rect {x:0.,y:0.,width:1600.,height:900.};
-        let mut d=Director::new(Size{width:900,height:900},Mode::Follow,50);
+        let mut d=Director::new(Size{width:900,height:900},Mode::Follow,25,50);
         let p=|x| Some(Point{x,y:450.});
         d.update(Some(bounds),p(800.),0.);
-        let guide=d.minimum_guide(p(800.).unwrap(),bounds);
-        d.update(Some(bounds),p(1025.),0.05);
+        let guide=d.follow_guide(p(800.).unwrap(),bounds);
+        let rect = guide.unwrap();
+        assert_eq!(rect.width / rect.height, 16. / 9.);
+        d.update(Some(bounds),p(1200.),0.05);
         assert!(!d.focused);
-        assert_eq!(guide,d.minimum_guide(p(1025.).unwrap(),bounds));
-        d.update(Some(bounds),p(1026.),0.05);
+        assert_eq!(guide,d.follow_guide(p(1200.).unwrap(),bounds));
+        d.update(Some(bounds),p(1201.),0.05);
         assert!(d.focused);
+        d.update_with_buttons(Some(bounds),p(1201.),None,0.60,true);
+        assert_eq!(d.view.height,225.);
     }
 
     #[test]
@@ -233,6 +249,7 @@ mod tests {
                 height: 300,
             },
             Mode::Fit,
+            70,
             70,
         );
         let left = Rect {
