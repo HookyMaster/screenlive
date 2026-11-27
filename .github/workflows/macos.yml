@@ -28,7 +28,7 @@ jobs:
         run: bash platform/macos/build.sh "${{ matrix.arch }}"
       - name: Verify architecture
         run: |
-          lipo -verify_arch "${{ matrix.arch }}" platform/macos/dist/ScreenLive.app/Contents/MacOS/ScreenLive
+          lipo platform/macos/dist/ScreenLive.app/Contents/MacOS/ScreenLive -verify_arch "${{ matrix.arch }}"
           codesign --verify --strict platform/macos/dist/ScreenLive.app
       - uses: actions/upload-artifact@v4
         with:
