@@ -103,9 +103,11 @@ fn main() -> Result<(), AnyError> {
     let mut preview_near = None;
     let mut include_panel = false;
     let mut close_range = 70;
+    let mut follow_range = None;
     let mut cursor_trail = false;
     let mut cursor_color = [115, 135, 255];
     let mut preview_size_file = None;
+    let mut preview_position_file = None;
     let mut flags = args[4..].iter();
     while let Some(flag) = flags.next() {
         match flag.as_str() {
@@ -126,6 +128,9 @@ fn main() -> Result<(), AnyError> {
                     flags.next().ok_or("Missing preview size file")?,
                 ));
             }
+            "--preview-position-file" => {
+                preview_position_file = Some(PathBuf::from(flags.next().ok_or("Missing preview position file")?));
+            }
             "--fit" => mode = Mode::Fit,
             "--controlled" => controlled = true,
             "--preview-only" => {
@@ -145,6 +150,9 @@ fn main() -> Result<(), AnyError> {
                     .next()
                     .ok_or("Missing closest framing size")?
                     .parse()?
+            }
+            "--follow-range" => {
+                follow_range = Some(flags.next().ok_or("Missing follow range")?.parse::<u32>()?);
             }
             "--size" => {
                 let (w, h) = flags
@@ -191,7 +199,7 @@ fn main() -> Result<(), AnyError> {
     let region = handles.iter().find_map(|(_, rectangle)| *rectangle);
     let has_windows = handles.iter().any(|(hwnd, _)| !hwnd.is_invalid());
     let capture_display = fullscreen || (region.is_some() && !has_windows);
-    let mut camera = Director::new(output, mode, close_range);
+    let mut camera = Director::new(output, mode, close_range, follow_range.unwrap_or(close_range));
     let mut view = if preview || controlled {
         Some(Preview::new(
             output,
@@ -199,6 +207,7 @@ fn main() -> Result<(), AnyError> {
             capture_display,
             preview_near,
             preview_size_file,
+            preview_position_file,
         )?)
     } else {
         None
@@ -342,6 +351,7 @@ fn main() -> Result<(), AnyError> {
         let mut f9_down = key_down(VK_F9.0);
         let mut stop_requested = false;
         let rate = if preview_only { 15 } else { FPS };
+        let mut last_camera_tick = Instant::now();
         let frame_period = 1.0 / f64::from(rate);
         let mut cursor_history = VecDeque::<(Instant, Point)>::new();
         'frames: for index in 0..seconds * rate {
@@ -413,7 +423,13 @@ fn main() -> Result<(), AnyError> {
                     })
             });
             let pointer = hovered.map(|(p, _)| p);
-            camera.update_for_surface(bounds, pointer, hovered.map(|(_, r)| r), frame_period);
+            let now = Instant::now();
+            let dt = now.duration_since(last_camera_tick).as_secs_f64();
+            last_camera_tick = now;
+            // The high bit covers a held drag; the low bit can catch a tap between frames.
+            let button_action = [0x01, 0x02, 0x04, 0x05, 0x06].into_iter()
+                .fold(false, |pressed, key| (unsafe { GetAsyncKeyState(key) } != 0) || pressed);
+            camera.update_with_buttons(bounds, pointer, hovered.map(|(_, r)| r), dt, button_action);
             let fill = if preview_only {
                 &cached_background
             } else {
@@ -499,7 +515,7 @@ fn main() -> Result<(), AnyError> {
                 }
                 view.pump();
                 if preview_only || index % 2 == 0 {
-                    let minimum = hovered.and_then(|(p, r)| camera.minimum_guide(p, r));
+                    let minimum = hovered.and_then(|(p, r)| camera.follow_guide(p, r));
                     view.draw(&composite, render_size, minimum);
                 }
             }
@@ -1172,6 +1188,8 @@ struct Preview {
     output: Size,
     guide_pixels: Vec<u8>,
     size_file: Option<PathBuf>,
+    position_file: Option<PathBuf>,
+    saved_position: Cell<Option<(i32, i32)>>,
 }
 
 #[derive(Clone, Copy)]
@@ -1241,6 +1259,13 @@ thread_local! {
 #[cfg(test)]
 mod preview_tests {
     use super::*;
+
+    #[test]
+    fn preview_position_preserves_negative_monitor_coordinates() {
+        assert_eq!(parse_preview_position("-1280,80"), Some((-1280, 80)));
+        assert_eq!(parse_preview_position("300,420"), Some((300, 420)));
+        assert_eq!(parse_preview_position("bad,80"), None);
+    }
 
     #[test]
     fn transparent_panel_pixels_reveal_the_existing_frame() {
@@ -1482,6 +1507,22 @@ fn place_near_panel(panel: HWND, width: i32, height: i32) -> Option<(i32, i32, i
     Some(preview_placement(bounds, info.rcWork, width, height))
 }
 
+fn parse_preview_position(value: &str) -> Option<(i32, i32)> {
+    let (x, y) = value.trim().split_once(',')?;
+    Some((x.parse().ok()?, y.parse().ok()?))
+}
+
+fn write_preview_value(path: &Path, value: &str) -> std::io::Result<()> {
+    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+    let result = std::fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))
+        .and_then(|()| std::fs::write(&temporary, value))
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(temporary);
+    }
+    result
+}
+
 impl Preview {
     fn new(
         output: Size,
@@ -1489,6 +1530,7 @@ impl Preview {
         capture_display: bool,
         near: Option<HWND>,
         size_file: Option<PathBuf>,
+        position_file: Option<PathBuf>,
     ) -> windows::core::Result<Self> {
         let scale = size_file
             .as_ref()
@@ -1501,9 +1543,15 @@ impl Preview {
             });
         let width = (f64::from(output.width) * scale).round() as i32;
         let height = (f64::from(output.height) * scale).round() as i32;
-        let (x, y, width, height) = near
-            .and_then(|panel| place_near_panel(panel, width, height))
-            .unwrap_or((40, 40, width, height));
+        let saved_position = position_file.as_ref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|value| parse_preview_position(&value));
+        let (x, y, width, height) = if let Some((x, y)) = saved_position {
+            (x, y, width, height)
+        } else {
+            near.and_then(|panel| place_near_panel(panel, width, height))
+                .unwrap_or((40, 40, width, height))
+        };
         let hwnd = unsafe {
             CreateWindowExW(
                 WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
@@ -1546,11 +1594,16 @@ impl Preview {
             output,
             guide_pixels: Vec::new(),
             size_file,
+            position_file,
+            saved_position: Cell::new(saved_position),
         })
     }
 
     fn toggle(&mut self) {
-        PREVIEW_DRAG.set(None);
+        if let Some(drag) = PREVIEW_DRAG.take() {
+            if drag.edge != (0, 0) { self.save_size(); }
+            self.save_position();
+        }
         self.visible = !self.visible;
         unsafe {
             let _ = ShowWindow(self.hwnd, if self.visible { SW_SHOWNA } else { SW_HIDE });
@@ -1566,8 +1619,9 @@ impl Preview {
             }
             // Move between frames without entering Windows' modal move loop.
             if !self.visible || !key_down(VK_LBUTTON.0) {
-                if PREVIEW_DRAG.take().is_some_and(|drag| drag.edge != (0, 0)) {
-                    self.save_size();
+                if let Some(drag) = PREVIEW_DRAG.take() {
+                    if drag.edge != (0, 0) { self.save_size(); }
+                    self.save_position();
                 }
             } else if let Some(drag) = PREVIEW_DRAG.get() {
                 let mut cursor = POINT::default();
@@ -1577,7 +1631,9 @@ impl Preview {
                     if drag.edge == (0, 0) {
                         flags |= SWP_NOSIZE;
                     }
-                    let _ = SetWindowPos(self.hwnd, None, x, y, width, height, flags);
+                    if SetWindowPos(self.hwnd, None, x, y, width, height, flags).is_ok() {
+                        self.save_position();
+                    }
                 }
             }
         }
@@ -1587,13 +1643,20 @@ impl Preview {
         let Some((path, edge)) = self.size_file.as_ref().zip(self.client_long_edge()) else {
             return;
         };
-        let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-        let result = std::fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))
-            .and_then(|()| std::fs::write(&temporary, edge.to_string()))
-            .and_then(|()| std::fs::rename(&temporary, path));
-        if let Err(error) = result {
-            let _ = std::fs::remove_file(temporary);
+        if let Err(error) = write_preview_value(path, &edge.to_string()) {
             eprintln!("Could not save the preview size: {error}");
+        }
+    }
+
+    fn save_position(&self) {
+        let Some(path) = self.position_file.as_ref() else { return; };
+        let mut rect = RECT::default();
+        if unsafe { GetWindowRect(self.hwnd, &mut rect) }.is_err() { return; }
+        let position = (rect.left, rect.top);
+        if self.saved_position.get() == Some(position) { return; }
+        match write_preview_value(path, &format!("{},{}", position.0, position.1)) {
+            Ok(()) => self.saved_position.set(Some(position)),
+            Err(error) => eprintln!("Could not save the preview position: {error}"),
         }
     }
 

@@ -152,6 +152,7 @@ if (native) {
   for (const id of ['ratio', 'mode', 'background', 'appearance']) restoreSelect(id, savedConfig[id]);
   restoreSelect('preview-start', savedConfig.preview);
   if (Number.isFinite(savedConfig.closeRange)) $('close-range').value = savedConfig.closeRange;
+  $('follow-range').value = Number.isFinite(savedConfig.followRange) ? savedConfig.followRange : $('close-range').value;
   $('cursor-trail').checked = savedConfig.cursorTrail === true;
   $('include-panel').checked = savedConfig.includePanel === true;
 }
@@ -296,6 +297,7 @@ function selectDialSection(id) {
   $('dial-options').hidden = !id || !$('dial-options').contains($(id));
   $('region-controls').hidden = !native || id !== 'source';
   $('preview-range').hidden = id !== 'preview-start';
+  $('follow-range-row').hidden = id !== 'preview-start';
   if (id) $('dial-back').focus();
   updateAudioLevels();
 }
@@ -426,6 +428,7 @@ if (native) {
 function cameraSettings() {
   return {
     closeRange: Number($('close-range').value),
+    followRange: Number($('follow-range').value),
     cursorTrail: $('cursor-trail').checked,
     includePanel: $('include-panel').checked,
   };
@@ -471,6 +474,7 @@ function renderSession(state) {
   $('preview-start').disabled = locked;
   $('appearance').disabled = locked;
   $('close-range').disabled = locked;
+  $('follow-range').disabled = locked;
   $('cursor-trail').disabled = locked;
   $('include-panel').disabled = locked;
   syncInlineSettings();
@@ -538,7 +542,7 @@ $('source').onchange = () => {
 $('preview-start').onchange = refreshNativePreview;
 $('cursor-trail').onchange = refreshNativePreview;
 $('include-panel').onchange = refreshNativePreview;
-for (const [input, output] of [['close-range', 'close-value']]) {
+for (const [input, output] of [['close-range', 'close-value'], ['follow-range', 'follow-value']]) {
   const refresh = () => { $(output).value = $(input).value + '%'; };
   $(input).oninput = refresh;
   $(input).onchange = refreshNativePreview;
@@ -726,9 +730,10 @@ $('frame').addEventListener('pointermove', event => {
   const y = (event.clientY - top) / height;
   const point = { x, y };
   const minimum = Number($('close-range').value) / 100;
+  const follow = Number($('follow-range').value) / 100;
   mockOrigin ??= point;
   mockCenter ??= point;
-  if (!mockWide && Math.max(Math.abs(x - mockCenter.x), Math.abs(y - mockCenter.y)) > minimum * .4) {
+  if (!mockWide && Math.max(Math.abs(x - mockCenter.x), Math.abs(y - mockCenter.y)) > follow * .5) {
     const span = Math.max(Math.floor(Math.abs(x - mockOrigin.x) * width * 1.2) / width,
       Math.floor(Math.abs(y - mockOrigin.y) * height * 1.2) / height, minimum);
     $('frame').style.setProperty('--zoom', String(minimum / span));

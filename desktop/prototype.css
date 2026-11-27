@@ -280,8 +280,8 @@ body.native-panel.panel-collapsed[data-state=recording]{padding:8px 0}
 .background-choice[data-style=mist]::before{background:linear-gradient(#eef4f9,#ccd8e4)}
 .background-choice[data-style=mint]::before{background:linear-gradient(#def8f4,#bbe6d0)}
 .background-choice[data-style=sunset]::before{background:linear-gradient(#ffdcd0,#f09eb4)}
-#preview-range{display:grid;grid-template-columns:1fr auto;gap:3px;padding-inline:2px;color:var(--soft-ink)}
-#close-range{grid-column:1/-1;width:100%;accent-color:var(--soft-ink);margin:0 0 4px}
+:is(#preview-range,#follow-range-row){display:grid;grid-template-columns:1fr auto;gap:3px;padding-inline:2px;color:var(--soft-ink)}
+:is(#close-range,#follow-range){grid-column:1/-1;width:100%;accent-color:var(--soft-ink);margin:0 0 4px}
 #extra-controls :is(#cursor-trail-option,#include-panel-option){display:flex;align-items:center;gap:5px;margin-bottom:6px;color:var(--soft-ink)}
 #extra-controls input[type=checkbox]{appearance:none;display:grid;align-items:center;flex:none;width:30px;height:16px;margin:2px 3px 2px 1px;padding:2px;border:0;border-radius:999px;background:var(--soft-base);box-shadow:inset 2px 2px 3px var(--soft-shade),inset -2px -2px 3px var(--soft-light);cursor:pointer}
 #extra-controls input[type=checkbox]::before{content:"";width:12px;height:12px;border-radius:50%;background:var(--soft-light);box-shadow:1px 1px 3px var(--soft-drop);transition:transform 140ms ease}
@@ -338,7 +338,7 @@ html[lang=en] #audio-controls{grid-template-columns:minmax(0,1fr)}
 html[lang=en] #audio-controls label{min-width:0;white-space:normal}
 html[lang=en] #audio-controls input{flex:none}
 html[lang=en] #dial-detail select{width:100%;max-width:100%;text-overflow:ellipsis}
-html[lang=en] #preview-range{grid-template-columns:minmax(0,1fr) auto}
+html[lang=en] :is(#preview-range,#follow-range-row){grid-template-columns:minmax(0,1fr) auto}
 html[lang=en] #save-location>div{display:flex;flex-wrap:wrap;gap:5px}
 html[lang=en] #extra-controls>small{display:block}
 html[lang=en] #native-hint #status{overflow-x:hidden}
