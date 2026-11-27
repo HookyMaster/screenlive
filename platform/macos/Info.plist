@@ -3,10 +3,11 @@
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>ScreenLive</string>
 <key>CFBundleIdentifier</key><string>app.screenlive.macos</string>
+<key>CFBundleIconFile</key><string>ScreenLive.icns</string>
 <key>CFBundleName</key><string>ScreenLive</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.3.0</string>
-<key>CFBundleVersion</key><string>23</string>
+<key>CFBundleShortVersionString</key><string>0.3.13</string>
+<key>CFBundleVersion</key><string>36</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSMicrophoneUsageDescription</key><string>ScreenLive uses the microphone only when microphone recording is enabled.</string>
 <key>NSAudioCaptureUsageDescription</key><string>ScreenLive records system audio only when enabled.</string>

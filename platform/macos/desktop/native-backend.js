@@ -45,10 +45,12 @@ const native = (() => {
         await invoke('begin', { options: {
           source: state.source, ratio: settings.ratio, mode: settings.mode,
           background: settings.background, preview: settings.preview,
+          boostAudio: settings.boostAudio,
           inputDevice: settings.microphone ? settings.inputDevice : null,
           outputDevice: settings.systemAudio ? settings.outputDevice : null,
           outputFolder: settings.outputFolder || null,
           closeRange: settings.closeRange,
+          followRange: settings.followRange,
           cursorTrail: settings.cursorTrail,
           cursorColor: settings.cursorColor,
           includePanel: settings.includePanel,

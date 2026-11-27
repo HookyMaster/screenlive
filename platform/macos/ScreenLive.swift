@@ -6,6 +6,35 @@ import CoreGraphics
 import CoreMedia
 import AudioToolbox
 
+@MainActor private final class CaptureLog {
+    static let shared = CaptureLog()
+    private let clock = ISO8601DateFormatter()
+    private var file: FileHandle?
+
+    private init() {
+        clock.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let manager = FileManager.default
+        let directory = manager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/ScreenLive")
+        let url = directory.appendingPathComponent("capture.log")
+        do {
+            try manager.createDirectory(at:directory,withIntermediateDirectories:true)
+            if !manager.fileExists(atPath:url.path) { try Data().write(to:url) }
+            let handle = try FileHandle(forWritingTo:url)
+            if try handle.seekToEnd() > 2_000_000 {
+                try Data(contentsOf:url).write(to:directory.appendingPathComponent("capture.previous.log"),options:.atomic)
+                try handle.truncate(atOffset:0)
+            }
+            file = handle
+        } catch { NSLog("ScreenLive capture log: %@",error.localizedDescription) }
+    }
+
+    func write(_ event: String) {
+        let line = "\(clock.string(from:Date())) [\(ProcessInfo.processInfo.processIdentifier)] \(event)\n"
+        do { try file?.write(contentsOf:Data(line.utf8)) }
+        catch { NSLog("ScreenLive capture log: %@",error.localizedDescription) }
+    }
+}
+
 struct CaptureSource: Identifiable {
     let id: String
     let title: String
@@ -33,6 +62,7 @@ final class Recorder: NSObject, ObservableObject, SCRecordingOutputDelegate, SCS
     @Published var ratio = "16:9"
     @Published var microphone = false
     var microphoneID: String?
+    var boostAudio = true
     @Published var systemAudio = true
     @Published var busy = false
     @Published var recording = false
@@ -100,9 +130,12 @@ final class Recorder: NSObject, ObservableObject, SCRecordingOutputDelegate, SCS
         if panel.runModal() == .OK, let url = panel.url { folder = url }
     }
 
+    private(set) var saveProgress = Progress(totalUnitCount:100)
+
     func start() async {
         guard !busy, !recording, let source = sources.first(where: { $0.id == selected }) else { return }
         busy = true
+        saveProgress = Progress(totalUnitCount:100)
         starting = true
         savedURL = nil
         do {
@@ -205,11 +238,18 @@ final class Recorder: NSObject, ObservableObject, SCRecordingOutputDelegate, SCS
                     return
                 }
             }
-            if effectsActive, let raw = pendingURL, !samples.isEmpty {
+            let progress = saveProgress
+            let hasCamera = effectsActive && !samples.isEmpty
+            let hasGain = boostAudio && (microphone || systemAudio)
+            let videoWeight: Int64 = hasCamera ? (hasGain ? 75 : 99) : 0
+            if hasCamera, let raw = pendingURL {
                 busy = true
                 let final = raw.deletingPathExtension().appendingPathExtension("framed.mp4")
                 do {
-                    try await exportCamera(raw:raw,to:final,size:effectSize,output:outputSize,samples:samples,color:cameraSettings.color)
+                    try await exportCamera(raw:raw,to:final,size:effectSize,output:outputSize,samples:samples,color:cameraSettings.color) { value in
+                        progress.completedUnitCount = Int64(Double(videoWeight) * value)
+                    }
+                    progress.completedUnitCount = videoWeight
                     if microphone || systemAudio {
                         guard try await !AVURLAsset(url:final).loadTracks(withMediaType:.audio).isEmpty else {
                             throw NSError(domain:"ScreenLive", code:23, userInfo:[NSLocalizedDescriptionKey:"构图导出时音轨丢失"])
@@ -224,12 +264,31 @@ final class Recorder: NSObject, ObservableObject, SCRecordingOutputDelegate, SCS
                     return
                 }
             } else { savedURL = pendingURL }
+            if hasGain, let input = savedURL {
+                busy = true
+                savedURL = nil
+                let boosted = input.deletingPathExtension().appendingPathExtension("audio.mp4")
+                do {
+                    try await boostRecordingAudio(input,to:boosted) { value in
+                        progress.completedUnitCount = videoWeight + Int64(Double(99-videoWeight) * value)
+                    }
+                    savedURL = boosted
+                    try? FileManager.default.removeItem(at:input)
+                } catch {
+                    try? FileManager.default.removeItem(at:boosted)
+                    pendingURL = nil; stream = nil; output = nil; recording = false; busy = false
+                    samples.removeAll()
+                    status = "音量增强失败，原录制已保留在 " + input.path + "：" + error.localizedDescription
+                    return
+                }
+            }
             samples.removeAll()
             pendingURL = nil
             stream = nil
             output = nil
             recording = false
             busy = false
+            progress.completedUnitCount = 100
             status = "录制已保存"
         }
     }
@@ -301,43 +360,55 @@ final class DialPanel: NSPanel {
     var meterFilter: SCContentFilter?
     var meterGeneration = 0
     var permissionRequested = false
-    var pickerContinuation: CheckedContinuation<Any, Error>?
-    func pickSource() async throws -> Any {
-        guard pickerContinuation == nil, !recorder.recording, !recorder.busy else { throw NSError(domain:"ScreenLive", code:4, userInfo:[NSLocalizedDescriptionKey:"当前无法选择来源"]) }
+    func presentDisplayPicker() async throws {
+        guard !recorder.recording, !recorder.busy else {
+            throw NSError(domain:"ScreenLive",code:4,userInfo:[NSLocalizedDescriptionKey:"请在录制结束后重新选择来源"])
+        }
         let picker = SCContentSharingPicker.shared
         var config = SCContentSharingPickerConfiguration()
-        config.allowedPickerModes = [.singleWindow, .singleDisplay]
+        config.allowedPickerModes = [.singleDisplay]
+        CaptureLog.shared.write("display.request previewRunning=\(preview.isCapturing)")
+        await preview.clearSelection()
         config.excludedWindowIDs = preview.panel.map { [$0.windowNumber] } ?? []
-        config.allowsChangingSelectedContent = false
+        config.allowsChangingSelectedContent = true
         picker.defaultConfiguration = config
         picker.isActive = true
-        picker.add(self)
-        return try await withCheckedThrowingContinuation { continuation in
-            pickerContinuation = continuation
-            picker.present()
-        }
+        NSApp.activate(ignoringOtherApps:true)
+        CaptureLog.shared.write("display.present previewReleased=true")
+        picker.present(using:.display)
     }
-    private func finishPicker(_ result: Result<Any, Error>) {
-        guard let continuation = pickerContinuation else { return }
-        pickerContinuation = nil
-        SCContentSharingPicker.shared.remove(self)
-        continuation.resume(with: result)
+
+    private func notifyPicker(_ result: [String:String]) {
+        web.callAsyncJavaScript("window.screenLivePickerChanged?.(result)",arguments:["result":result],
+                                in:nil,in:.page,completionHandler:nil)
     }
+
     nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker, didCancelFor stream: SCStream?) {
-        Task { @MainActor in self.finishPicker(.success(NSNull())) }
+        Task { @MainActor in
+            CaptureLog.shared.write("display.cancelled")
+            self.notifyPicker(["status":"cancelled"])
+        }
     }
     nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker, didUpdateWith filter: SCContentFilter, for stream: SCStream?) {
         Task { @MainActor in
-            guard self.pickerContinuation != nil else { return }
-            let source = CaptureSource(id:"system-picker", title:"系统已选择的采集来源", filter:filter, size:filter.contentRect.size)
-            self.recorder.sources.removeAll { $0.id == source.id }
-            self.recorder.sources.insert(source, at:0)
+            guard picker.isActive, !self.recorder.recording, !self.recorder.busy else { return }
+            var title = "已选显示器"
+            if #available(macOS 15.2, *), let display = filter.includedDisplays.first {
+                title = "显示器 " + String(display.displayID)
+            }
+            CaptureLog.shared.write("display.selected size=\(filter.contentRect.size)")
+            let source = CaptureSource(id:"system-picker",title:title,filter:filter,size:filter.contentRect.size)
+            self.recorder.sources.removeAll { $0.id == source.id || $0.crop != nil }
+            self.recorder.sources.insert(source,at:0)
             self.recorder.selected = source.id
-            self.finishPicker(.success(["id":source.id,"title":source.title]))
+            self.notifyPicker(["status":"selected","id":source.id,"title":source.title])
         }
     }
     nonisolated func contentSharingPickerStartDidFailWithError(_ error: Error) {
-        Task { @MainActor in self.finishPicker(.failure(error)) }
+        Task { @MainActor in
+            CaptureLog.shared.write("display.failed domain=\((error as NSError).domain) code=\((error as NSError).code)")
+            self.notifyPicker(["status":"error","message":error.localizedDescription])
+        }
     }
     func stopMeter() async {
         meterGeneration += 1
@@ -378,6 +449,8 @@ final class DialPanel: NSPanel {
     var savedConfig: [String: Any] = [:]
     func applicationDidFinishLaunching(_ notification: Notification) {
 
+        CaptureLog.shared.write("app.started version=\(Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") ?? "?")")
+        SCContentSharingPicker.shared.add(self)
         let config = WKWebViewConfiguration()
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "screenlive")
         config.userContentController.addUserScript(WKUserScript(source: "window.__TAURI__ = {core:{invoke:(command,args={})=>window.webkit.messageHandlers.screenlive.postMessage({command,args})}};", injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -388,7 +461,7 @@ final class DialPanel: NSPanel {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.level = .floating
+        configureOverlay(panel)
         panel.isMovableByWindowBackground = true
         panel.contentView = web
         panel.makeKeyAndOrderFront(nil)
@@ -396,19 +469,36 @@ final class DialPanel: NSPanel {
             web.loadFileURL(root.appendingPathComponent("prototype.html"), allowingReadAccessTo: root)
         }
     }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        panel.orderFrontRegardless()
+        return true
+    }
+
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
         guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any], let command = body["command"] as? String else { replyHandler(nil, "Invalid request"); return }
         let a = body["args"] as? [String: Any] ?? [:]
         Task { @MainActor in
             do { replyHandler(try await run(command, a), nil) }
-            catch { replyHandler(nil, error.localizedDescription) }
+            catch {
+                CaptureLog.shared.write("\(command).failed domain=\((error as NSError).domain) code=\((error as NSError).code)")
+                replyHandler(nil, error.localizedDescription)
+            }
         }
     }
     func run(_ command: String, _ a: [String: Any]) async throws -> Any {
         func error(_ msg: String) -> NSError { NSError(domain: "ScreenLive", code: 1, userInfo: [NSLocalizedDescriptionKey: msg]) }
         switch command {
         case "panel_ready": return true
-        case "system_pick_source": return try await pickSource()
+        case "clear_sources":
+            guard !recorder.recording, !recorder.busy else { throw error("请在录制结束后取消来源") }
+            CaptureLog.shared.write("selection.clear")
+            SCContentSharingPicker.shared.isActive = false
+            recorder.sources.removeAll()
+            recorder.selected = ""
+            await stopMeter()
+            await preview.clearSelection()
+            return true
+        case "pick_display": try await presentDisplayPicker(); return true
         case "screen_permission": return CGPreflightScreenCaptureAccess()
         case "request_screen_permission":
             if CGPreflightScreenCaptureAccess() { return true }
@@ -454,10 +544,22 @@ final class DialPanel: NSPanel {
             panel.sharingType = options["includePanel"] as? Bool == true ? .readOnly : .none
             if let color = options["background"] as? String { try await recorder.applyBackground(color) }
             if options["preview"] as? Bool == true, let source = recorder.sources.first(where: { $0.id == options["source"] as? String }) {
-                try await preview.show(source:source,ratio:options["ratio"] as? String ?? "9:16",background:options["background"] as? String ?? "gradient",settings:CameraSettings(options),includePanel:options["includePanel"] as? Bool == true)
-            } else { await preview.stop() }
+                do {
+                    CaptureLog.shared.write("preview.start region=\(source.crop != nil)")
+                    try await preview.show(source:source,ratio:options["ratio"] as? String ?? "9:16",background:options["background"] as? String ?? "gradient",settings:CameraSettings(options),includePanel:options["includePanel"] as? Bool == true)
+                    CaptureLog.shared.write("preview.running")
+                } catch let error as NSError where error.domain == SCStreamErrorDomain && error.code == -3801 {
+                    await preview.stop()
+                    CaptureLog.shared.write("preview.denied domain=\(error.domain) code=\(error.code)")
+                    return ["previewDenied":true]
+                }
+            } else {
+                if preview.isCapturing { CaptureLog.shared.write("preview.stop") }
+                await preview.stop()
+            }
             return true
         case "pick_region":
+            CaptureLog.shared.write("region.request previewRunning=\(preview.isCapturing)")
             let choice = recorder.sources.first { $0.id == a["source"] as? String }
             guard let base = choice else { throw error("请先选择一个来源") }
             let selectedRect: CGRect?
@@ -465,13 +567,15 @@ final class DialPanel: NSPanel {
                 let logical = base.filter.contentRect.size
                 guard logical.width > 0, logical.height > 0, let screen = panel.screen ?? NSScreen.main else { throw error("无法读取来源尺寸，请重新选择来源") }
                 let snapshot = try await preview.regionImage(for:base,includePanel:a["includePanel"] as? Bool == true)
+                CaptureLog.shared.write("region.snapshotReady")
                 selectedRect = await chooseRectangle(on:screen,snapshot:snapshot,logicalSize:logical)
             } else {
                 let id = UInt32(base.id.replacingOccurrences(of:"display-",with:""))
                 guard let screen = NSScreen.screens.first(where:{ ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id }) else { throw error("显示器已断开，请重新选择") }
                 selectedRect = await chooseRectangle(on:screen)
             }
-            guard let rect = selectedRect else { return NSNull() }
+            guard let rect = selectedRect else { CaptureLog.shared.write("region.cancelled"); return NSNull() }
+            CaptureLog.shared.write("region.selected size=\(rect.size)")
             let id = ["region",String(Int(rect.minX)),String(Int(rect.minY)),String(Int(rect.maxX)),String(Int(rect.maxY))].joined(separator:":")
             recorder.sources.removeAll { $0.crop != nil }
             recorder.sources.append(CaptureSource(id:id,title:"框选区域",filter:base.filter,size:rect.size,crop:rect,worldOrigin:base.worldOrigin,windowID:base.windowID,panelFilter:base.panelFilter))
@@ -480,13 +584,14 @@ final class DialPanel: NSPanel {
             await stopMeter()
             let o = a["options"] as? [String: Any] ?? [:]
             let source = o["source"] as? String ?? ""
-            guard !source.contains(","), recorder.sources.contains(where: {$0.id == source}) else { throw error("目前仅支持单个显示器或窗口") }
+            guard !source.contains(","), recorder.sources.contains(where: {$0.id == source}) else { throw error("请先选择要录制的显示器") }
             recorder.selected = source
             recorder.cameraSettings = CameraSettings(o)
             recorder.includePanel = o["includePanel"] as? Bool == true
             panel.sharingType = recorder.includePanel ? .readOnly : .none
             recorder.background = o["background"] as? String ?? "gradient"
             recorder.ratio = o["ratio"] as? String ?? "9:16"
+            recorder.boostAudio = o["boostAudio"] as? Bool ?? true
             recorder.microphone = o["inputDevice"] is String
             recorder.microphoneID = o["inputDevice"] as? String
             recorder.systemAudio = o["outputDevice"] is String
@@ -498,7 +603,7 @@ final class DialPanel: NSPanel {
         case "control":
             phase = "saving"; await recorder.stop(); return true
         case "recording_status":
-            if recorder.recording { return ["state":phase,"progress":0] }
+            if recorder.recording { return ["state":phase,"progress":Int(recorder.saveProgress.completedUnitCount)] }
             if let url = recorder.savedURL { return ["state":"saved","path":url.path] }
             return ["state":"failed","error":recorder.status]
         case "show_recording":
@@ -515,7 +620,7 @@ final class DialPanel: NSPanel {
         let app = NSApplication.shared
         let delegate = PanelController()
         app.delegate = delegate
-        app.setActivationPolicy(.accessory)
+        app.setActivationPolicy(.regular)
         app.run()
     }
 }

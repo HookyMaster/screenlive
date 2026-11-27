@@ -55,6 +55,7 @@ function sourceLabelKey(value) {
 let outputFolder = '';
 let selectedRegion = '';
 let pickingRegion = false;
+let choosingSource = false;
 let savedConfig = {};
 let configReady = false;
 let configurationWrites = Promise.resolve();
@@ -75,7 +76,7 @@ function persistConfig() {
     ratio: $('ratio').value, mode: $('mode').value, background: $('background').value,
     preview: $('preview-start').value, appearance: $('appearance').value,
     inputDevice: $('input-device').value, outputDevice: $('output-device').value,
-    microphone: $('microphone').checked, systemAudio: $('system-audio').checked,
+    microphone: $('microphone').checked, systemAudio: $('system-audio').checked, boostAudio: $('boost-audio').checked,
     sourceNames: [...$('source').selectedOptions].map(option => option.dataset.sourceName || option.textContent),
   };
   if (!settings.sourceNames.length && !sourceSelectionTouched) {
@@ -160,6 +161,7 @@ if (native) {
   for (const id of ['ratio', 'mode', 'background', 'appearance']) restoreSelect(id, savedConfig[id]);
   restoreSelect('preview-start', savedConfig.preview);
   if (Number.isFinite(savedConfig.closeRange)) $('close-range').value = savedConfig.closeRange;
+  $('follow-range').value = Number.isFinite(savedConfig.followRange) ? savedConfig.followRange : $('close-range').value;
   $('cursor-trail').checked = savedConfig.cursorTrail === true;
   $('include-panel').checked = savedConfig.includePanel === true;
 }
@@ -247,35 +249,66 @@ const buildInlineSetting = select => {
 };
 const inlineSettings = [...$('dial-options').querySelectorAll('select')].map(buildInlineSetting);
 if (native) {
+  const entry = inlineSettings.find(item => item.select.id === 'source');
   const detail = document.createElement('small');
-  const systemPicker = document.createElement('button');
-  systemPicker.type = 'button';
-  systemPicker.textContent = '使用 macOS 系统选择器';
-  systemPicker.onclick = async () => {
+  entry.group.querySelectorAll('label').forEach(label => label.remove());
+  let openingPicker = false;
+  const display = document.createElement('button');
+  display.type = 'button';
+  display.textContent = t('选择显示器');
+  display.onclick = async () => {
+    if (entry.select.disabled || openingPicker || pickingRegion) return;
+    openingPicker = true;
+    choosingSource = true;
+    $('status').textContent = t('请在系统选择器中选择显示器');
     try {
-      const source = await window.__TAURI__.core.invoke('system_pick_source');
-      if (!source) return;
-      const entry = inlineSettings.find(item => item.select.id === 'source');
-      const select = entry.select;
-      const field = document.createElement('label');
-      field.append(document.createTextNode('采集来源'), select);
-      entry.group.replaceWith(field);
-      for (const option of [...select.options]) if (option.value === source.id) option.remove();
-      select.add(new Option(source.title, source.id));
-      select.value = source.id;
-      Object.assign(entry, buildInlineSetting(select));
-      entry.group.prepend(systemPicker);
-      entry.group.append(detail);
-      detail.textContent = '已通过系统选择来源，可以返回开始录制。';
-      setSelectedRegion('');
-      adapter.select(source.id);
+      await previewQueue;
+      await window.__TAURI__.core.invoke('pick_display');
+    } catch (error) {
+      choosingSource = false;
+      $('status').textContent = detail.textContent = message(error);
       refreshNativePreview();
-      syncInlineSettings();
-    } catch (error) { detail.textContent = String(error); }
+    } finally { openingPicker = false; }
   };
-  const sourceGroup = inlineSettings.find(item => item.select.id === 'source').group;
-  sourceGroup.prepend(systemPicker);
-  sourceGroup.append(detail);
+  entry.group.append(display, $('pick-region'));
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.textContent = t('取消选择');
+  clear.disabled = true;
+  clear.onclick = async () => {
+    if (entry.select.disabled || clear.disabled || pickingRegion) return;
+    entry.group.disabled = true;
+    try {
+      await previewQueue;
+      await window.__TAURI__.core.invoke('clear_sources');
+      choosingSource = false;
+      entry.select.replaceChildren();
+      detail.textContent = '';
+      savedConfig.sourceNames = [];
+      clear.disabled = true;
+      entry.select.dispatchEvent(new Event('change', { bubbles:true }));
+      $('status').textContent = t('已取消选择');
+    } catch (error) { $('status').textContent = message(error); }
+    finally { entry.group.disabled = entry.select.disabled; }
+  };
+  entry.group.append(clear);
+  entry.group.append(detail, $('region-size'));
+  window.screenLivePickerChanged = result => {
+    const wasChoosing = choosingSource;
+    choosingSource = false;
+    if (result.status === 'cancelled' || result.status === 'error') {
+      $('status').textContent = result.status === 'cancelled' ? '已取消选择' : result.message;
+      if (wasChoosing) refreshNativePreview();
+      return;
+    }
+    if (result.status !== 'selected') return;
+    const option = new Option(result.title, result.id, true, true);
+    option.dataset.sourceName = result.title;
+    entry.select.replaceChildren(option);
+    detail.textContent = result.title;
+    clear.disabled = false;
+    entry.select.dispatchEvent(new Event('change', { bubbles:true }));
+  };
 }
 function syncInlineSettings() {
   for (const { select, group } of inlineSettings) {
@@ -384,8 +417,8 @@ function selectDialSection(id) {
     (item.closest('.dial-choice-group') || item).hidden = key !== id;
   }
   $('dial-options').hidden = !id || !$('dial-options').contains($(id));
-  $('region-controls').hidden = !native || id !== 'source';
   $('preview-range').hidden = id !== 'preview-start';
+  $('follow-range-row').hidden = id !== 'preview-start';
   if (id) $('dial-back').focus();
   updateAudioLevels();
 }
@@ -481,7 +514,6 @@ function setSelectedRegion(region) {
   selectedRegion = region;
   const label = $('region-size');
   label.hidden = !region;
-  $('clear-region').hidden = !region;
   $('pick-region').textContent = region ? t('重新框选') : t('框选区域');
   if (region) {
     const [, left, top, right, bottom] = region.split(':').map(Number);
@@ -494,11 +526,6 @@ function setSelectedRegion(region) {
 if (native) {
   $('pick-region').onclick = async () => {
     if (pickingRegion || !['idle', 'saved', 'failed'].includes(session?.phase)) return;
-    const selectedWindows = [...$('source').selectedOptions].filter(option => option.value !== 'primary-display');
-    if (selectedWindows.length >= 8) {
-      $('status').textContent = t('请先取消一个窗口，再添加框选区域。');
-      return;
-    }
     pickingRegion = true;
     $('status').textContent = '正在准备框选画面…';
     try {
@@ -518,17 +545,12 @@ if (native) {
       pickingRegion = false;
     }
   };
-  $('clear-region').onclick = () => {
-    sourceSelectionTouched = true;
-    setSelectedRegion('');
-    adapter.select(sourceSelection());
-    persistConfig();
-    refreshNativePreview();
-  };
+
 }
 function cameraSettings() {
   return {
     closeRange: Number($('close-range').value),
+    followRange: Number($('follow-range').value),
     cursorTrail: $('cursor-trail').checked,
     includePanel: $('include-panel').checked,
   };
@@ -537,15 +559,20 @@ function cursorColor() {
   return getComputedStyle($('control-dock')).getPropertyValue('--theme-accent').trim();
 }
 function refreshNativePreview() {
-  if (!native || pickingRegion || !['idle', 'saved', 'failed', 'recording'].includes(session?.phase)) return;
+  if (!native || choosingSource || pickingRegion || !['idle', 'saved', 'failed', 'recording'].includes(session?.phase)) return;
   previewQueue = previewQueue.catch(() => {}).then(async () => {
-    if (pickingRegion || !['idle', 'saved', 'failed', 'recording'].includes(session?.phase)) return;
-    await native.setPreview({
+    if (choosingSource || pickingRegion || !['idle', 'saved', 'failed', 'recording'].includes(session?.phase)) return;
+    const result = await native.setPreview({
       source: sourceSelection(), ratio: $('ratio').value, mode: $('mode').value,
       background: $('background').value, preview: $('preview-start').value === 'show',
       ...cameraSettings(),
       cursorColor: cursorColor(),
     });
+    if (result?.previewDenied) {
+      $('preview-start').value = 'hide';
+      syncInlineSettings();
+      $('status').textContent = '已保留所选来源。系统未允许预览，可在「预览」中重新开启。';
+    }
   }).catch(error => { $('status').textContent = message(error); });
 }
 $('hide-preview').onclick = togglePreview;
@@ -566,14 +593,14 @@ function renderSession(state) {
     setCollapsed(true);
   }
   $('source').disabled = locked;
-  $('pick-region').disabled = locked;
-  $('clear-region').disabled = locked;
+  $('pick-region').disabled = locked || !$('source').value;
   $('mode').disabled = locked;
   $('ratio').disabled = locked;
   $('background').disabled = locked && !running;
   $('preview-start').disabled = locked && !running;
   $('appearance').disabled = locked;
   $('close-range').disabled = locked;
+  $('follow-range').disabled = locked;
   $('cursor-trail').disabled = locked;
   $('include-panel').disabled = locked;
   syncInlineSettings();
@@ -610,7 +637,7 @@ function renderSession(state) {
     $('save-light').style.transform = 'rotate(' + (progress * 3.6) + 'deg)';
     $('settings').hidden = showResult;
     const mark = feedback.querySelector('.result-mark');
-    mark.textContent = saving ? progress + '%' : phase === 'starting' ? '·' : '';
+    mark.textContent = saving && progress > 0 ? progress + '%' : '·';
     mark.hidden = phase !== 'starting' && phase !== 'saving';
     feedback.querySelector('.result-title').textContent = ({
       starting: t('准备录制'), saving: t('正在保存'), saved: t('视频已保存'), failed: t('保存未完成'),
@@ -619,7 +646,7 @@ function renderSession(state) {
     $('play-file').hidden = phase !== 'saved';
     $('result-back').hidden = phase === 'starting' || phase === 'saving';
     $('preview-label').textContent = t('录制画幅');
-    $('empty').textContent = source ? t('开始录制后打开实时预览') : t('请先选择要录制的窗口');
+    $('empty').textContent = source ? t('开始录制后打开实时预览') : t('请先选择显示器');
     $('status').textContent = ({
       idle: source === 'primary-display' ? t('整屏可能包含其他窗口与通知。') :
         source ? t('F8 显示或隐藏预览 · F9 开录') :
@@ -643,7 +670,7 @@ $('source').onchange = () => {
 $('preview-start').onchange = refreshNativePreview;
 $('cursor-trail').onchange = refreshNativePreview;
 $('include-panel').onchange = refreshNativePreview;
-for (const [input, output] of [['close-range', 'close-value']]) {
+for (const [input, output] of [['close-range', 'close-value'], ['follow-range', 'follow-value']]) {
   const refresh = () => { $(output).value = $(input).value + '%'; };
   $(input).oninput = refresh;
   $(input).onchange = refreshNativePreview;
@@ -663,7 +690,7 @@ async function toggle() {
   else {
     if (native) await persistConfig();
     adapter.start({
-    systemAudio: $('system-audio').checked,
+    systemAudio: $('system-audio').checked, boostAudio: $('boost-audio').checked,
     microphone: $('microphone').checked,
     outputDevice: $('output-device').value,
     inputDevice: $('input-device').value,
@@ -676,6 +703,7 @@ async function toggle() {
   }
 }
 function syncAudioControls(locked = $('system-audio').disabled) {
+  $('boost-audio').disabled = locked;
   const outputEnabled = $('system-audio').checked;
   const inputEnabled = $('microphone').checked;
   $('output-row').hidden = !outputEnabled;
@@ -754,6 +782,7 @@ if (native) {
   restoreSelect('input-device', savedConfig.inputDevice);
   restoreSelect('output-device', savedConfig.outputDevice);
   $('microphone').checked = !$('microphone').disabled && savedConfig.microphone === true;
+  $('boost-audio').checked = savedConfig.boostAudio !== false;
   $('system-audio').checked = !$('system-audio').disabled && savedConfig.systemAudio === true;
   syncAudioControls();
   configReady = true;
@@ -831,9 +860,10 @@ $('frame').addEventListener('pointermove', event => {
   const y = (event.clientY - top) / height;
   const point = { x, y };
   const minimum = Number($('close-range').value) / 100;
+  const follow = Number($('follow-range').value) / 100;
   mockOrigin ??= point;
   mockCenter ??= point;
-  if (!mockWide && Math.max(Math.abs(x - mockCenter.x), Math.abs(y - mockCenter.y)) > minimum * .4) {
+  if (!mockWide && Math.max(Math.abs(x - mockCenter.x), Math.abs(y - mockCenter.y)) > follow * .5) {
     const span = Math.max(Math.floor(Math.abs(x - mockOrigin.x) * width * 1.2) / width,
       Math.floor(Math.abs(y - mockOrigin.y) * height * 1.2) / height, minimum);
     $('frame').style.setProperty('--zoom', String(minimum / span));

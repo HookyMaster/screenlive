@@ -3,6 +3,13 @@ import AVFoundation
 import CoreImage
 import ScreenCaptureKit
 
+@MainActor
+func configureOverlay(_ panel: NSPanel) {
+    panel.hidesOnDeactivate = false
+    panel.level = .statusBar
+    panel.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary]
+}
+
 final class SelectionPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
@@ -211,7 +218,22 @@ final class PreviewSurface: NSView {
 @MainActor final class LivePreview: NSObject {
     private let cameraClock = CameraClock()
     private var generation = 0
-    var stream: SCStream?
+    private var stream: SCStream?
+    private var installedFilter: SCContentFilter?
+    private(set) var isCapturing = false
+
+    private func prepareSelection(_ filter: SCContentFilter, configuration: SCStreamConfiguration = SCStreamConfiguration()) {
+        guard stream == nil else { return }
+        stream = SCStream(filter:filter,configuration:configuration,delegate:nil)
+        installedFilter = filter
+    }
+    private func applySelection(_ filter: SCContentFilter) async throws {
+        prepareSelection(filter)
+        if installedFilter !== filter, let stream {
+            try await stream.updateContentFilter(filter)
+            installedFilter = filter
+        }
+    }
     var panel: NSPanel?
     private var frames: PreviewFrames?
     private var baseFilter: SCContentFilter?
@@ -227,7 +249,7 @@ final class PreviewSurface: NSView {
         throw NSError(domain:"ScreenLive",code:18,userInfo:[NSLocalizedDescriptionKey:"等待来源画面超时。原选区已保留。"])
     }
     func regionImage(for source: CaptureSource, includePanel: Bool) async throws -> CGImage {
-        if baseFilter === source.filter, let frames, stream != nil { return try await image(from:frames) }
+        if baseFilter === source.filter, let frames, isCapturing { return try await image(from:frames) }
         let size = source.filter.contentRect.size
         guard size.width > 0, size.height > 0 else { throw NSError(domain:"ScreenLive",code:19,userInfo:[NSLocalizedDescriptionKey:"来源尺寸无效"]) }
         let scale = min(1,1600/max(size.width,size.height))
@@ -253,21 +275,30 @@ final class PreviewSurface: NSView {
         cameraClock.stop()
         generation += 1
         panel?.orderOut(nil)
-        let previous = stream
+        if isCapturing, let stream {
+            isCapturing = false
+            try? await stream.stopCapture()
+        }
+        if let frames, let stream { try? stream.removeStreamOutput(frames,type:.screen) }
+        frames = nil
+        baseFilter = nil
+    }
+    func clearSelection() async {
+        await stop()
         stream = nil
-        if let previous { try? await previous.stopCapture() }
-        if stream == nil { frames = nil; baseFilter = nil }
+        installedFilter = nil
+        panel?.contentView = nil
     }
     func show(source: CaptureSource, ratio:String, background:String,settings:CameraSettings,includePanel:Bool) async throws {
-        let ticket = generation + 1
-        await stop()
-        guard generation == ticket else { return }
+        generation += 1
+        let ticket = generation
+        cameraClock.stop()
         let parts = ratio.split(separator:":").compactMap { Double($0) }
         let aspect = parts.count == 2 && parts[1] > 0 ? parts[0]/parts[1] : 1
         let size = NSSize(width: min(360,300*aspect), height:min(300,360/aspect))
         let window = panel ?? NSPanel(contentRect:NSRect(origin:CGPoint(x:410,y:320),size:size),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
         window.isMovableByWindowBackground = false
-        window.level = .floating
+        configureOverlay(window)
         window.backgroundColor = .black
         window.sharingType = .none
         // Fit the new preset inside the previous footprint when switching ratios.
@@ -279,7 +310,7 @@ final class PreviewSurface: NSView {
             window.setFrame(CGRect(x:window.frame.minX, y:window.frame.maxY-fitted.height,
                                    width:fitted.width, height:fitted.height), display:true)
         }
-        let sink = PreviewFrames()
+        let sink = frames ?? PreviewFrames()
         sink.layer.videoGravity = .resizeAspect
         let view = PreviewSurface(frame:NSRect(origin:.zero,size:window.frame.size))
         view.wantsLayer = true
@@ -317,10 +348,24 @@ final class PreviewSurface: NSView {
         config.backgroundColor = fillColor(background)
         config.scalesToFit = true
         config.preservesAspectRatio = true
-        let capture = SCStream(filter:includePanel ? (source.panelFilter ?? source.filter) : source.filter, configuration:config, delegate:nil)
-        try capture.addStreamOutput(sink,type:.screen,sampleHandlerQueue:.main)
-        try await capture.startCapture()
-        guard generation == ticket else { try? await capture.stopCapture(); return }
+        let filter = includePanel ? (source.panelFilter ?? source.filter) : source.filter
+        if stream == nil {
+            prepareSelection(filter,configuration:config)
+        } else {
+            try await applySelection(filter)
+            try await stream?.updateConfiguration(config)
+        }
+        guard let capture = stream else { return }
+        guard generation == ticket else { return }
+        if frames == nil {
+            try capture.addStreamOutput(sink,type:.screen,sampleHandlerQueue:.main)
+            frames = sink
+        }
+        if !isCapturing {
+            try await capture.startCapture()
+            guard generation == ticket else { try? await capture.stopCapture(); return }
+            isCapturing = true
+        }
         if settings.follow || settings.trail {
             cameraClock.start(source,aspect,settings) { [weak view] _,pose in
                 view?.pose = pose

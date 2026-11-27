@@ -5,12 +5,14 @@ import CoreImage
 struct CameraSettings {
     var follow = false
     var trail = false
-    var fraction = 0.7
+    var closeFraction = 0.7
+    var followFraction = 0.7
     var color = CGColor(srgbRed:0.2,green:0.8,blue:0.7,alpha:1)
     init(_ values: [String:Any] = [:]) {
         follow = values["mode"] as? String == "follow"
         trail = values["cursorTrail"] as? Bool == true
-        fraction = max(0.25,min(1,(values["closeRange"] as? Double ?? 70)/100))
+        closeFraction = max(0.25,min(1,(values["closeRange"] as? Double ?? 70)/100))
+        followFraction = max(0.25,min(1,(values["followRange"] as? Double).map { $0 / 100 } ?? closeFraction))
         if let hex = values["cursorColor"] as? String, let n = Int(hex.trimmingCharacters(in:CharacterSet(charactersIn:"# ")),radix:16) {
             color = CGColor(srgbRed:CGFloat(n>>16)/255,green:CGFloat((n>>8)&255)/255,blue:CGFloat(n&255)/255,alpha:1)
         }
@@ -33,7 +35,7 @@ struct CameraMotion {
     var history: [(Double,CGPoint)] = []
     mutating func step(size: CGSize, aspect: Double, pointer: CGPoint?, settings: CameraSettings, now:Double, dt:Double, buttonAction:Bool = false) -> CameraPose {
         let center = CGPoint(x:size.width/2,y:size.height/2)
-        let near = min(size.height,size.width/aspect)*settings.fraction
+        let near = min(size.height,size.width/aspect)*settings.closeFraction
         func rect(_ p:CGPoint,_ h:Double)->CGRect { CGRect(x:p.x-h*aspect/2,y:p.y-h/2,width:h*aspect,height:h) }
         let overview = rect(center,max(size.height,size.width/aspect))
         if view.isEmpty { view = overview }
@@ -42,7 +44,12 @@ struct CameraMotion {
             if previous == nil || now-lastActivity >= idleDelay { anchor = previous ?? pointer }
             if moved || buttonAction { lastActivity = now }
         }
-        let threshold = anchor.map { rect($0,near) }
+        func followRange(at center: CGPoint) -> CGRect {
+            let width = size.width * settings.followFraction
+            let height = size.height * settings.followFraction
+            return CGRect(x:center.x-width/2, y:center.y-height/2, width:width, height:height)
+        }
+        let threshold = anchor.map(followRange)
         let crossed = moved && pointer.map { p in
             guard let box = threshold else { return false }
             return p.x < box.minX || p.x > box.maxX || p.y < box.minY || p.y > box.maxY
@@ -68,7 +75,7 @@ struct CameraMotion {
         previous = pointer ?? (focused ? previous : nil)
         history.removeAll { now-$0.0 > 0.28 }
         if settings.trail, let pointer, history.last?.1 != pointer { history.append((now,pointer)) }
-        return CameraPose(view:view,guide:settings.follow && pointer != nil ? (focused ? pointer : anchor).map{rect($0,near)} : nil,trail:history.map{$0.1})
+        return CameraPose(view:view,guide:settings.follow && pointer != nil ? (focused ? pointer : anchor).map(followRange) : nil,trail:history.map{$0.1})
     }
 }
 @MainActor final class CameraClock {
@@ -158,7 +165,7 @@ final class CameraCompositor: NSObject, AVVideoCompositing {
     }
 }
 
-func exportCamera(raw:URL, to destination:URL, size:CGSize, output:CGSize, samples:[CameraSample], color:CGColor) async throws {
+func exportCamera(raw:URL, to destination:URL, size:CGSize, output:CGSize, samples:[CameraSample], color:CGColor, progress:@escaping @Sendable (Double) -> Void) async throws {
     let asset = AVURLAsset(url:raw)
     guard !samples.isEmpty, let track = try await asset.loadTracks(withMediaType:.video).first,
           let export = AVAssetExportSession(asset:asset,presetName:AVAssetExportPresetHighestQuality)
@@ -169,5 +176,5 @@ func exportCamera(raw:URL, to destination:URL, size:CGSize, output:CGSize, sampl
     comp.frameDuration = CMTime(value:1,timescale:30)
     comp.instructions = [CameraInstruction(duration:try await asset.load(.duration),track:track.trackID,size:size,samples:samples,color:color)]
     export.videoComposition = comp
-    try await export.export(to:destination,as:.mp4)
+    try await exportMP4(export,to:destination,progress:progress)
 }
